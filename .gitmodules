@@ -1,0 +1,3 @@
+[submodule "emoney"]
+	path = emoney
+	url = https://github.com/nguyenlevid/emoney.git
