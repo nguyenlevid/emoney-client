@@ -1,0 +1,581 @@
+// API Response Types
+export interface ApiResponse<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: ApiError;
+}
+
+export interface ApiError {
+  code: string;
+  message: string;
+  details?: unknown;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+// Authentication Types
+export interface LoginRequest {
+  account: string;
+  password: string;
+}
+
+export interface AuthUser {
+  _id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  displayName: string;
+  isActive: boolean;
+  createdAt: string;
+  lastLoginAt?: string;
+}
+
+export interface UserRole {
+  role: 'owner' | 'admin' | 'accountant' | 'viewer';
+  company: string;
+  companyName: string;
+  status: 'invited' | 'active' | 'removed';
+}
+
+export interface AuthSession {
+  user: AuthUser;
+  companies: UserRole[];
+  currentCompany?: UserRole;
+  permissions?: Permission[];
+  csrfToken?: string;
+  expiresAt?: string;
+}
+
+export interface Permission {
+  resource: string;
+  actions: string[];
+}
+
+// Company Types
+export interface Address {
+  street?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  country?: string;
+}
+
+export interface CompanySettings {
+  baseCurrency: string;
+  fiscalYearStart: string;
+  accountingMethod: 'accrual' | 'cash';
+  taxId?: string;
+  timezone?: string;
+}
+
+export interface Company {
+  _id: string;
+  name: string;
+  slug: string;
+  email: string;
+  phoneNumber?: string;
+  address: Address;
+  settings: CompanySettings;
+  logo?: string;
+  website?: string;
+  industry?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateCompanyRequest {
+  name: string;
+  email: string;
+  phoneNumber?: string;
+  address?: Address;
+  settings?: Partial<CompanySettings>;
+}
+
+// Membership Types
+export interface Membership {
+  _id: string;
+  userId: string;
+  companyId: string;
+  role: 'OWNER' | 'ADMIN' | 'ACCOUNTANT' | 'VIEWER';
+  status: 'active' | 'inactive' | 'pending';
+  joinedAt: string;
+  company?: {
+    _id: string;
+    name: string;
+    email?: string;
+    settings?: {
+      currency: string;
+      accountingMethod: 'accrual' | 'cash';
+    };
+  };
+}
+
+export interface CreateCompanyWithMembershipRequest {
+  companyName: string;
+  email?: string;
+  phoneNumber?: string;
+  website?: string;
+  address?: {
+    street?: string;
+    city?: string;
+    state?: string;
+    zipCode?: string;
+    country?: string;
+  };
+  settings: {
+    currency: string;
+    accountingMethod: 'accrual' | 'cash';
+  };
+}
+
+export interface UpdateCompanyRequest extends Partial<CreateCompanyRequest> {
+  logo?: File;
+}
+
+// Account Types
+export type AccountType =
+  | 'ASSET'
+  | 'LIABILITY'
+  | 'EQUITY'
+  | 'REVENUE'
+  | 'EXPENSE';
+export type NormalSide = 'DEBIT' | 'CREDIT';
+
+export interface Account {
+  _id: string;
+  companyId: string;
+  code: string;
+  name: string;
+  accountType: AccountType;
+  subType: string;
+  parentAccount?: string | { _id: string; code: string; name: string };
+  balance: number;
+  normalSide: NormalSide;
+  isActive: boolean;
+  isSystem: boolean;
+  description?: string;
+  taxCode?: string;
+  transactionCount?: number; // Transaction count for warnings
+  hasTransactions?: boolean; // Quick check for delete logic
+  createdAt: string;
+  updatedAt: string;
+  children?: Account[]; // Populated in hierarchy structure
+}
+
+// Enhanced account list response structure
+export interface AccountListResponse {
+  accounts: Account[]; // Flat list for table views
+  hierarchy: AccountTreeNode[]; // Pre-built hierarchical structure
+  meta: AccountMeta; // Summary statistics
+}
+
+// Tree node structure for hierarchical display
+export interface AccountTreeNode {
+  _id: string;
+  code: string;
+  name: string;
+  accountType: AccountType;
+  isSystem?: boolean;
+  isActive?: boolean;
+  transactionCount?: number;
+  hasTransactions?: boolean;
+  children: AccountTreeNode[];
+  level?: number; // For display purposes
+}
+
+// Account summary metadata
+export interface AccountMeta {
+  total: number;
+  active: number;
+  inactive: number;
+  system: number;
+  withTransactions: number;
+}
+
+// Enhanced API Response format (consistent across all endpoints)
+export interface BackendResponse<T = unknown> {
+  isOk: boolean;
+  rcode: number; // 2xxx for success, 4xxx for client errors, 7xxx for server errors
+  data: T;
+}
+
+export interface CreateAccountRequest {
+  companyId: string;
+  code: string;
+  name: string;
+  accountType: AccountType;
+  subType: string;
+  parentAccount?: string;
+  description?: string;
+  taxCode?: string;
+}
+
+export interface UpdateAccountRequest extends Partial<CreateAccountRequest> {
+  isActive?: boolean;
+}
+
+export interface AccountBalance {
+  accountId: string;
+  balance: number;
+  debitTotal: number;
+  creditTotal: number;
+  date: string;
+}
+
+// Transaction Types
+export type TransactionSourceType =
+  | 'MANUAL'
+  | 'INVOICE'
+  | 'EXPENSE'
+  | 'PAYMENT';
+
+export interface TransactionEntry {
+  _id?: string;
+  account: string;
+  accountName?: string;
+  debit: number;
+  credit: number;
+  description?: string;
+}
+
+export interface Transaction {
+  _id: string;
+  companyId: string;
+  date: string;
+  description: string;
+  reference?: string;
+  sourceType: TransactionSourceType;
+  sourceId?: string;
+  entries: TransactionEntry[];
+  totalAmount: number;
+  isReconciled: boolean;
+  customerId?: string;
+  supplierId?: string;
+  notes?: string;
+  tags?: string[];
+  attachments?: string[];
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateTransactionRequest {
+  companyId: string;
+  date: string;
+  description: string;
+  reference?: string;
+  sourceType?: TransactionSourceType;
+  entries: Omit<TransactionEntry, '_id'>[];
+  customerId?: string;
+  supplierId?: string;
+  notes?: string;
+  tags?: string[];
+}
+
+export interface CreateManualTransactionRequest {
+  companyId: string;
+  description: string;
+  date: string;
+  amount: number;
+  debitAccountId: string;
+  creditAccountId: string;
+  reference?: string;
+  notes?: string;
+  tags?: string[];
+}
+
+export interface CreateExpenseTransactionRequest {
+  companyId: string;
+  description: string;
+  date: string;
+  amount: number;
+  expenseAccountId: string;
+  payableAccountId: string;
+  supplierId?: string;
+  merchant?: string;
+  reference?: string;
+  notes?: string;
+  tags?: string[];
+}
+
+export interface TransactionFilters {
+  companyId: string;
+  startDate?: string;
+  endDate?: string;
+  accountId?: string;
+  contactId?: string;
+  sourceType?: TransactionSourceType;
+  search?: string;
+  isReconciled?: boolean;
+  minAmount?: number;
+  maxAmount?: number;
+  tags?: string[];
+  page?: number;
+  limit?: number;
+}
+
+// Contact Types
+export type ContactType =
+  | 'customer'
+  | 'supplier'
+  | 'employee'
+  | 'merchant'
+  | 'other';
+
+export interface ContactBalance {
+  current: number;
+  overdue: number;
+}
+
+export interface Contact {
+  _id: string;
+  companyId: string;
+  type: ContactType;
+  firstName?: string;
+  lastName?: string;
+  companyName?: string;
+  displayName: string;
+  email?: string;
+  phone?: string;
+  address: Address;
+  currency?: string;
+  creditLimit?: number;
+  paymentTerms?: string;
+  customerNumber?: string;
+  supplierNumber?: string;
+  balance: ContactBalance;
+  taxId?: string;
+  website?: string;
+  notes?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateContactRequest {
+  companyId: string;
+  type: ContactType;
+  firstName?: string;
+  lastName?: string;
+  companyName?: string;
+  email?: string;
+  phone?: string;
+  address?: Address;
+  currency?: string;
+  creditLimit?: number;
+  paymentTerms?: string;
+  taxId?: string;
+  website?: string;
+  notes?: string;
+}
+
+export interface UpdateContactRequest
+  extends Partial<Omit<CreateContactRequest, 'companyId'>> {}
+
+export interface ContactFilters {
+  companyId: string;
+  type?: ContactType;
+  search?: string;
+  isActive?: boolean;
+  page?: number;
+  limit?: number;
+}
+
+export interface InviteUserRequest {
+  companyId: string;
+  email: string;
+  role: 'admin' | 'accountant' | 'viewer';
+  firstName?: string;
+  lastName?: string;
+}
+
+// Report Types
+export interface ReportFilters {
+  companyId: string;
+  startDate?: string;
+  endDate?: string;
+  accountIds?: string[];
+  format?: 'json' | 'pdf' | 'csv';
+}
+
+export interface TrialBalanceEntry {
+  account: {
+    _id: string;
+    code: string;
+    name: string;
+    accountType: AccountType;
+  };
+  debitBalance: number;
+  creditBalance: number;
+  netBalance: number;
+}
+
+export interface TrialBalance {
+  companyId: string;
+  date: string;
+  entries: TrialBalanceEntry[];
+  totalDebits: number;
+  totalCredits: number;
+}
+
+export interface IncomeStatementEntry {
+  account: {
+    _id: string;
+    code: string;
+    name: string;
+    accountType: AccountType;
+  };
+  amount: number;
+  percentage?: number;
+}
+
+export interface IncomeStatement {
+  companyId: string;
+  startDate: string;
+  endDate: string;
+  revenue: IncomeStatementEntry[];
+  expenses: IncomeStatementEntry[];
+  totalRevenue: number;
+  totalExpenses: number;
+  netIncome: number;
+}
+
+export interface BalanceSheetEntry {
+  account: {
+    _id: string;
+    code: string;
+    name: string;
+    accountType: AccountType;
+  };
+  amount: number;
+  percentage?: number;
+}
+
+export interface BalanceSheet {
+  companyId: string;
+  date: string;
+  assets: BalanceSheetEntry[];
+  liabilities: BalanceSheetEntry[];
+  equity: BalanceSheetEntry[];
+  totalAssets: number;
+  totalLiabilities: number;
+  totalEquity: number;
+}
+
+export interface GeneralLedgerEntry {
+  transaction: {
+    _id: string;
+    date: string;
+    description: string;
+    reference?: string;
+  };
+  debit: number;
+  credit: number;
+  balance: number;
+}
+
+export interface GeneralLedger {
+  companyId: string;
+  account: Account;
+  startDate: string;
+  endDate: string;
+  openingBalance: number;
+  entries: GeneralLedgerEntry[];
+  closingBalance: number;
+}
+
+export interface CashFlowEntry {
+  account: {
+    _id: string;
+    code: string;
+    name: string;
+  };
+  amount: number;
+}
+
+export interface CashFlow {
+  companyId: string;
+  startDate: string;
+  endDate: string;
+  operatingActivities: CashFlowEntry[];
+  investingActivities: CashFlowEntry[];
+  financingActivities: CashFlowEntry[];
+  netOperatingCashFlow: number;
+  netInvestingCashFlow: number;
+  netFinancingCashFlow: number;
+  netCashFlow: number;
+  openingCash: number;
+  closingCash: number;
+}
+
+// UI Types
+export interface TableColumn<T> {
+  key: keyof T | string;
+  header: string;
+  sortable?: boolean;
+  width?: string;
+  align?: 'left' | 'center' | 'right';
+  render?: (value: T) => string | number | any;
+}
+
+export interface TableFilters {
+  search?: string;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+  page?: number;
+  limit?: number;
+}
+
+export interface SelectOption<T = string> {
+  value: T;
+  label: string;
+  disabled?: boolean;
+}
+
+export interface FormField {
+  name: string;
+  label: string;
+  type:
+    | 'text'
+    | 'email'
+    | 'password'
+    | 'number'
+    | 'date'
+    | 'select'
+    | 'textarea';
+  required?: boolean;
+  placeholder?: string;
+  options?: SelectOption[];
+  validation?: {
+    min?: number;
+    max?: number;
+    pattern?: RegExp;
+    message?: string;
+  };
+}
+
+// Error Types
+export interface ValidationError {
+  field: string;
+  message: string;
+}
+
+// Theme Types
+export type Theme = 'light' | 'dark' | 'system';
+
+// App Configuration Types
+export interface AppConfig {
+  apiBaseUrl: string;
+  apiTimeout: number;
+  version: string;
+  environment: 'development' | 'staging' | 'production';
+}
