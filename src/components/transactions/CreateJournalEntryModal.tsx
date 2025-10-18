@@ -3,7 +3,7 @@ import { createQuery } from '@tanstack/solid-query';
 import { Modal } from '@/components/ui/Modal';
 import { KobalteButton } from '@/components/ui/KobalteButton';
 import { EmoneyInput } from '@/components/ui/EmoneyInput';
-import { EmoneySelect } from '@/components/ui/EmoneySelect';
+import { EmoneySearchableSelect } from '@/components/ui/EmoneySearchableSelect';
 import { EmoneyTextarea } from '@/components/ui/EmoneyTextarea';
 import { apiClient } from '@/lib/api/client';
 import { authStore } from '@/lib/auth/authStore';
@@ -96,22 +96,87 @@ export const CreateJournalEntryModal = (
     );
   };
 
-  // Update debit/credit amount with validation (no auto-clear, user manages debit vs credit)
-  const updateAmount = (
+  // Handle description input - no state update on input, only on blur
+  const handleDescriptionBlur = (
+    e: FocusEvent & { currentTarget: HTMLInputElement },
     id: number,
-    field: 'debitAmount' | 'creditAmount',
-    value: string
+    field: 'description'
   ) => {
-    // Allow numbers and decimals only
-    const numValue = value.replace(/[^0-9.]/g, '');
-    // Prevent multiple decimal points
-    const parts = numValue.split('.');
-    const sanitized =
-      parts.length > 2 ? parts[0] + '.' + parts.slice(1).join('') : numValue;
-
+    const value = e.currentTarget.value.trim();
     setEntries(
       entries().map((entry) =>
-        entry.id === id ? { ...entry, [field]: sanitized } : entry
+        entry.id === id ? { ...entry, [field]: value } : entry
+      )
+    );
+  };
+
+  // Update debit/credit amount with validation (no auto-clear, user manages debit vs credit)
+  // Handle amount input change - filters but doesn't cause re-render issues
+  const handleAmountInput = (
+    e: InputEvent & { currentTarget: HTMLInputElement },
+    _id: number,
+    _field: 'debitAmount' | 'creditAmount'
+  ) => {
+    const input = e.currentTarget;
+    const cursorPosition = input.selectionStart || 0;
+    const oldValue = input.value;
+
+    // Filter to allow only numbers and one decimal point
+    const filtered = oldValue
+      .split('')
+      .filter((char) => /[0-9.]/.test(char))
+      .join('');
+
+    // Count decimal points and allow only one
+    const decimalCount = (filtered.match(/\./g) || []).length;
+    let finalValue = filtered;
+
+    if (decimalCount > 1) {
+      // Keep only the first decimal point
+      const parts = filtered.split('.');
+      finalValue = parts[0] + '.' + parts.slice(1).join('');
+    }
+
+    // Update the input value directly (no state update yet)
+    if (finalValue !== oldValue) {
+      input.value = finalValue;
+      // Restore cursor position
+      input.setSelectionRange(cursorPosition, cursorPosition);
+    }
+  };
+
+  // Update state only on blur for better performance
+  const handleAmountBlur = (
+    e: FocusEvent & { currentTarget: HTMLInputElement },
+    id: number,
+    field: 'debitAmount' | 'creditAmount'
+  ) => {
+    let value = e.currentTarget.value.trim();
+
+    if (!value || value === '' || value === '.') {
+      value = '';
+    } else {
+      // Sanitize: limit to 2 decimal places
+      const parts = value.split('.');
+      if (parts.length > 1) {
+        value = parts[0] + '.' + parts[1].slice(0, 2);
+      }
+
+      // Remove leading zeros except for "0" or "0.xx"
+      if (value.length > 1 && value[0] === '0' && value[1] !== '.') {
+        value = value.replace(/^0+/, '');
+      }
+
+      // Ensure we don't have an empty string after removing zeros
+      if (value === '' || value === '.') {
+        value = '';
+      }
+    }
+
+    // Update state only on blur
+    setEntries(
+      entries().map((entry) =>
+        entry.id === id ? { ...entry, [field]: value } : entry
       )
     );
   };
@@ -285,7 +350,7 @@ export const CreateJournalEntryModal = (
       isOpen={props.isOpen}
       onClose={handleClose}
       title="📒 Create Journal Entry"
-      maxWidth="xl"
+      maxWidth="5xl"
     >
       <form onSubmit={handleSubmit} class="space-y-6">
         {/* Header Fields */}
@@ -351,11 +416,11 @@ export const CreateJournalEntryModal = (
           {/* Entry Lines */}
           <div class="max-h-96 space-y-2 overflow-y-auto pr-2">
             <For each={entries()}>
-              {(entry) => (
+              {(entry, index) => (
                 <div class="grid grid-cols-12 items-start gap-2 rounded-lg border border-gray-200 bg-white/50 p-2 transition-colors hover:border-blue-300">
                   {/* Account */}
                   <div class="col-span-4">
-                    <EmoneySelect
+                    <EmoneySearchableSelect
                       placeholder="Select account"
                       value={entry.accountId}
                       options={(accountsQuery.data || []).map((acc) => ({
@@ -365,18 +430,21 @@ export const CreateJournalEntryModal = (
                       onChange={(value) =>
                         updateEntry(entry.id, 'accountId', value)
                       }
+                      tabIndex={index() * 10 + 1}
                     />
                   </div>
 
                   {/* Description */}
                   <div class="col-span-3">
-                    <EmoneyInput
+                    <input
                       type="text"
                       placeholder="Line description"
                       value={entry.description}
-                      onInput={(value) =>
-                        updateEntry(entry.id, 'description', value)
+                      tabIndex={index() * 10 + 2}
+                      onBlur={(e) =>
+                        handleDescriptionBlur(e, entry.id, 'description')
                       }
+                      class="w-full rounded-lg border border-gray-300 bg-white/85 px-3 py-2.5 text-sm text-gray-900 shadow-sm backdrop-blur-sm transition-all duration-300 ease-out placeholder:text-gray-500 hover:scale-[1.01] hover:border-blue-400 hover:bg-white hover:shadow-lg focus:scale-[1.01] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                     />
                   </div>
 
@@ -387,12 +455,12 @@ export const CreateJournalEntryModal = (
                       inputMode="decimal"
                       placeholder="0.00"
                       value={entry.debitAmount}
+                      tabIndex={index() * 10 + 3}
+                      onInput={(e) =>
+                        handleAmountInput(e, entry.id, 'debitAmount')
+                      }
                       onBlur={(e) =>
-                        updateAmount(
-                          entry.id,
-                          'debitAmount',
-                          e.currentTarget.value
-                        )
+                        handleAmountBlur(e, entry.id, 'debitAmount')
                       }
                       class="w-full rounded-lg border border-gray-300 bg-white/85 px-3 py-2.5 text-right text-sm text-gray-900 shadow-sm backdrop-blur-sm transition-all duration-300 ease-out placeholder:text-gray-500 hover:scale-[1.01] hover:border-blue-400 hover:bg-white hover:shadow-lg focus:scale-[1.01] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                     />
@@ -405,12 +473,12 @@ export const CreateJournalEntryModal = (
                       inputMode="decimal"
                       placeholder="0.00"
                       value={entry.creditAmount}
+                      tabIndex={index() * 10 + 4}
+                      onInput={(e) =>
+                        handleAmountInput(e, entry.id, 'creditAmount')
+                      }
                       onBlur={(e) =>
-                        updateAmount(
-                          entry.id,
-                          'creditAmount',
-                          e.currentTarget.value
-                        )
+                        handleAmountBlur(e, entry.id, 'creditAmount')
                       }
                       class="w-full rounded-lg border border-gray-300 bg-white/85 px-3 py-2.5 text-right text-sm text-gray-900 shadow-sm backdrop-blur-sm transition-all duration-300 ease-out placeholder:text-gray-500 hover:scale-[1.01] hover:border-blue-400 hover:bg-white hover:shadow-lg focus:scale-[1.01] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                     />
@@ -421,6 +489,7 @@ export const CreateJournalEntryModal = (
                     <button
                       type="button"
                       onClick={() => removeLine(entry.id)}
+                      tabIndex={-1}
                       class="rounded p-1 text-red-500 transition-colors hover:bg-red-50 hover:text-red-700"
                       disabled={entries().length <= 2}
                       title="Remove line"

@@ -3,7 +3,7 @@ import { createQuery } from '@tanstack/solid-query';
 import { Modal } from '@/components/ui/Modal';
 import { KobalteButton } from '@/components/ui/KobalteButton';
 import { EmoneyInput } from '@/components/ui/EmoneyInput';
-import { EmoneySelect } from '@/components/ui/EmoneySelect';
+import { EmoneySearchableSelect } from '@/components/ui/EmoneySearchableSelect';
 import { apiClient } from '@/lib/api/client';
 import { authStore } from '@/lib/auth/authStore';
 import { toastStore } from '@/lib/stores/toastStore';
@@ -175,7 +175,7 @@ export const CreateExpenseModal = (props: CreateExpenseModalProps) => {
 
         {/* Expense Category */}
         <div>
-          <EmoneySelect
+          <EmoneySearchableSelect
             label="Category *"
             placeholder="Select expense category"
             value={formData().expenseAccountId || ''}
@@ -198,7 +198,7 @@ export const CreateExpenseModal = (props: CreateExpenseModalProps) => {
         </div>
 
         {/* Payment Account */}
-        <EmoneySelect
+        <EmoneySearchableSelect
           label="Paid from *"
           placeholder="Select payment account"
           value={formData().payableAccountId || ''}

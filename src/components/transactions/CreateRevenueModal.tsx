@@ -3,7 +3,7 @@ import { createQuery } from '@tanstack/solid-query';
 import { Modal } from '@/components/ui/Modal';
 import { KobalteButton } from '@/components/ui/KobalteButton';
 import { EmoneyInput } from '@/components/ui/EmoneyInput';
-import { EmoneySelect } from '@/components/ui/EmoneySelect';
+import { EmoneySearchableSelect } from '@/components/ui/EmoneySearchableSelect';
 import { apiClient } from '@/lib/api/client';
 import { authStore } from '@/lib/auth/authStore';
 import { toastStore } from '@/lib/stores/toastStore';
@@ -143,7 +143,7 @@ export const CreateRevenueModal = (props: CreateRevenueModalProps) => {
       <form onSubmit={handleSubmit} class="space-y-4">
         {/* Description */}
         <EmoneyInput
-          label="What did you earn money from? *"
+          label="What did you earn money from?"
           type="text"
           placeholder="e.g., Client payment, Product sale"
           value={formData().description || ''}
@@ -155,7 +155,7 @@ export const CreateRevenueModal = (props: CreateRevenueModalProps) => {
 
         {/* Amount */}
         <EmoneyInput
-          label="How much? *"
+          label="How much?"
           type="text"
           inputMode="decimal"
           placeholder="0.00"
@@ -182,8 +182,8 @@ export const CreateRevenueModal = (props: CreateRevenueModalProps) => {
 
         {/* Revenue Category */}
         <div>
-          <EmoneySelect
-            label="Revenue Category *"
+          <EmoneySearchableSelect
+            label="Revenue Category"
             placeholder="Select revenue category"
             value={formData().revenueAccountId || ''}
             options={revenueAccounts().map((acc) => ({
@@ -205,8 +205,8 @@ export const CreateRevenueModal = (props: CreateRevenueModalProps) => {
         </div>
 
         {/* Receivable Account */}
-        <EmoneySelect
-          label="Received in *"
+        <EmoneySearchableSelect
+          label="Received in"
           placeholder="Select account"
           value={formData().receivableAccountId || ''}
           options={receivableAccounts().map((acc) => ({
@@ -221,7 +221,7 @@ export const CreateRevenueModal = (props: CreateRevenueModalProps) => {
 
         {/* Date */}
         <EmoneyInput
-          label="Date *"
+          label="Date"
           type="date"
           value={formData().date || ''}
           onInput={(value) => setFormData({ ...formData(), date: value })}

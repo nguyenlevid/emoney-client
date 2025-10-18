@@ -309,6 +309,18 @@ export interface CreateTransactionRequest {
   tags?: string[];
 }
 
+export interface UpdateTransactionRequest {
+  date?: string;
+  description?: string;
+  reference?: string;
+  entries?: Omit<TransactionEntry, '_id'>[];
+  customerId?: string;
+  supplierId?: string;
+  merchant?: string;
+  notes?: string;
+  tags?: string[];
+}
+
 export interface CreateManualTransactionRequest {
   companyId: string;
   description: string;

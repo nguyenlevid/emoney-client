@@ -6,7 +6,11 @@ import {
   createEffect,
   onCleanup,
 } from 'solid-js';
-import { createQuery } from '@tanstack/solid-query';
+import {
+  createQuery,
+  createMutation,
+  useQueryClient,
+} from '@tanstack/solid-query';
 import MainLayout from '@/components/layout/MainLayout';
 import { KobalteButton } from '@/components/ui/KobalteButton';
 import { EmoneyInput } from '@/components/ui/EmoneyInput';
@@ -14,8 +18,11 @@ import { EmoneySelect } from '@/components/ui/EmoneySelect';
 import { CreateExpenseModal } from '@/components/transactions/CreateExpenseModal';
 import { CreateRevenueModal } from '@/components/transactions/CreateRevenueModal';
 import { CreateJournalEntryModal } from '@/components/transactions/CreateJournalEntryModal';
+import { EditTransactionModal } from '@/components/transactions/EditTransactionModal';
+import { DeleteTransactionModal } from '@/components/transactions/DeleteTransactionModal';
 import { apiClient } from '@/lib/api/client';
 import { authStore } from '@/lib/auth/authStore';
+import { toastStore } from '@/lib/stores/toastStore';
 import type { Transaction, TransactionFilters } from '@/types';
 
 export default function TransactionsPage() {
@@ -27,6 +34,7 @@ export default function TransactionsPage() {
     accountId: undefined,
     contactId: undefined,
     sourceType: undefined,
+    isReconciled: undefined,
     search: '',
     page: 1,
     limit: 50,
@@ -42,6 +50,17 @@ export default function TransactionsPage() {
   const [modalType, setModalType] = createSignal<
     'journal' | 'expense' | 'revenue'
   >('journal');
+
+  // Edit/Delete modals
+  const [showEditModal, setShowEditModal] = createSignal(false);
+  const [showDeleteModal, setShowDeleteModal] = createSignal(false);
+  const [transactionToEdit, setTransactionToEdit] =
+    createSignal<Transaction | null>(null);
+  const [transactionToDelete, setTransactionToDelete] =
+    createSignal<Transaction | null>(null);
+
+  // Query client for mutations
+  const queryClient = useQueryClient();
 
   // Debounced search input
   const [searchInput, setSearchInput] = createSignal('');
@@ -222,6 +241,79 @@ export default function TransactionsPage() {
     transactionsQuery.refetch();
   };
 
+  // Reconciliation mutation
+  const reconcileMutation = createMutation(() => ({
+    mutationFn: async ({
+      transactionId,
+      isReconciled,
+    }: {
+      transactionId: string;
+      isReconciled: boolean;
+    }) => {
+      return apiClient.reconcileTransaction(
+        transactionId,
+        isReconciled,
+        authStore.selectedCompany?._id
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      toastStore.success('Transaction reconciliation updated');
+    },
+    onError: (error) => {
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Failed to update reconciliation';
+      toastStore.error(errorMessage);
+    },
+  }));
+
+  // Edit transaction
+  const handleEditTransaction = (transaction: Transaction) => {
+    if (transaction.reconciledAt) {
+      toastStore.error(
+        'Cannot edit reconciled transactions. Please unreconcile first.'
+      );
+      return;
+    }
+    setTransactionToEdit(transaction);
+    setShowEditModal(true);
+  };
+
+  const handleEditSuccess = () => {
+    setShowEditModal(false);
+    setTransactionToEdit(null);
+    transactionsQuery.refetch();
+  };
+
+  // Delete transaction
+  const handleDeleteTransaction = (transaction: Transaction) => {
+    if (transaction.reconciledAt) {
+      toastStore.error(
+        'Cannot delete reconciled transactions. Please unreconcile first.'
+      );
+      return;
+    }
+    setTransactionToDelete(transaction);
+    setShowDeleteModal(true);
+  };
+
+  const handleDeleteSuccess = () => {
+    setShowDeleteModal(false);
+    setTransactionToDelete(null);
+    transactionsQuery.refetch();
+  };
+
+  // Toggle reconciliation
+  const handleToggleReconcile = async (transaction: Transaction) => {
+    const newReconciledState = !transaction.isReconciled;
+    reconcileMutation.mutate({
+      transactionId: transaction._id,
+      isReconciled: newReconciledState,
+    });
+  };
+
   return (
     <MainLayout>
       <div class="px-4 py-6 sm:px-6 lg:px-8">
@@ -295,7 +387,7 @@ export default function TransactionsPage() {
 
         {/* Filters - Always visible */}
         <div class="mb-8 rounded-lg bg-white p-6 shadow">
-          <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-5">
             <div>
               <EmoneyInput
                 label="From Date"
@@ -348,6 +440,29 @@ export default function TransactionsPage() {
                     sourceType: value
                       ? (value as 'MANUAL' | 'INVOICE' | 'EXPENSE' | 'PAYMENT')
                       : undefined,
+                  });
+                }}
+              />
+            </div>
+            <div>
+              <EmoneySelect
+                label="Reconciled"
+                placeholder="All Transactions"
+                value={
+                  filters().isReconciled === undefined
+                    ? ''
+                    : filters().isReconciled
+                      ? 'true'
+                      : 'false'
+                }
+                options={[
+                  { value: '', label: 'All Transactions' },
+                  { value: 'true', label: 'Reconciled' },
+                  { value: 'false', label: 'Unreconciled' },
+                ]}
+                onChange={(value) => {
+                  updateFilters({
+                    isReconciled: value === '' ? undefined : value === 'true',
                   });
                 }}
               />
@@ -445,6 +560,9 @@ export default function TransactionsPage() {
                         </span>
                       </Show>
                     </th>
+                    <th class="px-6 py-3 text-center text-xs font-medium uppercase tracking-wider text-gray-500">
+                      Reconciled
+                    </th>
                     <th class="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
                       Actions
                     </th>
@@ -477,21 +595,117 @@ export default function TransactionsPage() {
                         <td class="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
                           {formatCurrency(getTransactionAmount(transaction))}
                         </td>
+                        <td class="whitespace-nowrap px-6 py-4 text-center">
+                          <label class="inline-flex cursor-pointer items-center">
+                            <input
+                              type="checkbox"
+                              class="form-checkbox h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                              checked={transaction.isReconciled}
+                              onChange={() =>
+                                handleToggleReconcile(transaction)
+                              }
+                              disabled={reconcileMutation.isPending}
+                              title={
+                                transaction.isReconciled
+                                  ? 'Unreconcile transaction'
+                                  : 'Reconcile transaction'
+                              }
+                            />
+                            <Show when={transaction.isReconciled}>
+                              <svg
+                                class="ml-1 h-4 w-4 text-green-600"
+                                fill="currentColor"
+                                viewBox="0 0 20 20"
+                              >
+                                <path
+                                  fill-rule="evenodd"
+                                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                                  clip-rule="evenodd"
+                                />
+                              </svg>
+                            </Show>
+                          </label>
+                        </td>
                         <td class="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
-                          <button
-                            class="mr-4 text-blue-600 hover:text-blue-900"
-                            onClick={() => setSelectedTransaction(transaction)}
-                          >
-                            View
-                          </button>
-                          <button
-                            class="text-green-600 hover:text-green-900"
-                            onClick={() => {
-                              /* TODO: Edit transaction */
-                            }}
-                          >
-                            Edit
-                          </button>
+                          <div class="flex items-center justify-end space-x-2">
+                            <button
+                              class="rounded px-2 py-1 text-blue-600 hover:bg-blue-50 hover:text-blue-900"
+                              onClick={() =>
+                                setSelectedTransaction(transaction)
+                              }
+                              title="View details"
+                            >
+                              <svg
+                                class="h-5 w-5"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  stroke-width="2"
+                                  d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"
+                                />
+                                <path
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  stroke-width="2"
+                                  d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"
+                                />
+                              </svg>
+                            </button>
+                            <button
+                              class="rounded px-2 py-1 text-green-600 hover:bg-green-50 hover:text-green-900 disabled:cursor-not-allowed disabled:opacity-50"
+                              onClick={() => handleEditTransaction(transaction)}
+                              disabled={!!transaction.reconciledAt}
+                              title={
+                                transaction.reconciledAt
+                                  ? 'Cannot edit reconciled transaction'
+                                  : 'Edit transaction'
+                              }
+                            >
+                              <svg
+                                class="h-5 w-5"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  stroke-width="2"
+                                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                                />
+                              </svg>
+                            </button>
+                            <button
+                              class="rounded px-2 py-1 text-red-600 hover:bg-red-50 hover:text-red-900 disabled:cursor-not-allowed disabled:opacity-50"
+                              onClick={() =>
+                                handleDeleteTransaction(transaction)
+                              }
+                              disabled={!!transaction.reconciledAt}
+                              title={
+                                transaction.reconciledAt
+                                  ? 'Cannot delete reconciled transaction'
+                                  : 'Delete transaction'
+                              }
+                            >
+                              <svg
+                                class="h-5 w-5"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                              >
+                                <path
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  stroke-width="2"
+                                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                />
+                              </svg>
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )}
@@ -667,6 +881,30 @@ export default function TransactionsPage() {
         onClose={() => setShowCreateModal(false)}
         onSuccess={handleTransactionCreated}
       />
+
+      {/* Edit Transaction Modal */}
+      <Show when={transactionToEdit()}>
+        {(transaction) => (
+          <EditTransactionModal
+            isOpen={showEditModal()}
+            onClose={() => setShowEditModal(false)}
+            onSuccess={handleEditSuccess}
+            transaction={transaction()}
+          />
+        )}
+      </Show>
+
+      {/* Delete Transaction Modal */}
+      <Show when={transactionToDelete()}>
+        {(transaction) => (
+          <DeleteTransactionModal
+            isOpen={showDeleteModal()}
+            onClose={() => setShowDeleteModal(false)}
+            onSuccess={handleDeleteSuccess}
+            transaction={transaction()}
+          />
+        )}
+      </Show>
     </MainLayout>
   );
 }
