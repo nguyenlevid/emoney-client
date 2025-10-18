@@ -12,6 +12,7 @@ import type {
   CreateAccountRequest,
   UpdateAccountRequest,
   Transaction,
+  TransactionListResponse,
   CreateTransactionRequest,
   CreateManualTransactionRequest,
   CreateExpenseTransactionRequest,
@@ -44,35 +45,45 @@ class ApiClient {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<ApiResponse<T>> {
+    // Skip token expiration check for authentication endpoints
+    const isAuthEndpoint =
+      endpoint.startsWith('/auth/login') ||
+      endpoint.startsWith('/auth/register') ||
+      endpoint.startsWith('/auth/activate') ||
+      endpoint.startsWith('/auth/reset-password') ||
+      endpoint.startsWith('/auth/forgot-password') ||
+      endpoint.startsWith('/auth/logout') ||
+      endpoint.startsWith('/auth/request-new-password');
+
+    // Check token expiration before making the request (client-side check)
+    // Skip for auth endpoints where user is trying to log in/out
+    if (!isAuthEndpoint) {
+      const { isCurrentTokenExpired } = await import('@/lib/auth/tokenUtils');
+      if (isCurrentTokenExpired()) {
+        console.warn('Token expired (client-side check), triggering logout');
+        this.handleAuthenticationFailure();
+        throw new Error('Session expired. Please log in again.');
+      }
+    }
+
     const url = `${this.baseURL}${endpoint}`;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    const timeoutId = window.setTimeout(() => controller.abort(), this.timeout);
 
     try {
-      // Get CSRF token from cookies
+      // Get CSRF token from cookies for unsafe methods
       const csrfToken = this.getCSRFToken();
 
-      // Get authorization token from localStorage if available
-      let authToken: string | null = null;
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const authUser = (globalThis as any).localStorage?.getItem('auth_user');
-        authToken = authUser ? JSON.parse(authUser)._id : null;
-      } catch {
-        // localStorage not available or parsing failed
-        authToken = null;
-      }
-
+      // For web clients, we rely on cookies (accessToken cookie) for authentication
+      // No need to send Authorization header for web clients
       const response = await fetch(url, {
         ...options,
         signal: controller.signal,
-        credentials: 'include', // Include cookies
+        credentials: 'include', // Include cookies (accessToken, csrfToken)
         headers: {
           'Content-Type': 'application/json',
-          ...(authToken && {
-            Authorization: `Bearer ${authToken}`,
-          }),
+          // Add CSRF token for unsafe methods (POST, PATCH, PUT, DELETE)
           ...(csrfToken &&
             ['POST', 'PATCH', 'PUT', 'DELETE'].includes(
               options.method || 'GET'
@@ -83,7 +94,21 @@ class ApiClient {
         },
       });
 
-      clearTimeout(timeoutId);
+      window.clearTimeout(timeoutId);
+
+      // Check for authentication/authorization errors
+      if (response.status === 401) {
+        const errorData = await response.json().catch(() => ({}));
+        console.warn(
+          'Authentication failed - token expired or invalid:',
+          errorData
+        );
+
+        // Trigger logout on authentication failure
+        this.handleAuthenticationFailure();
+
+        throw new Error('Session expired. Please log in again.');
+      }
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -95,9 +120,6 @@ class ApiClient {
           errorData,
           requestHeaders: {
             'Content-Type': 'application/json',
-            ...(authToken && {
-              Authorization: `Bearer ${authToken}`,
-            }),
             ...(csrfToken &&
               ['POST', 'PATCH', 'PUT', 'DELETE'].includes(
                 options.method || 'GET'
@@ -118,6 +140,22 @@ class ApiClient {
       // Handle backend response format: {isOk: boolean, data: any}
       // Convert to frontend expected format: {success: boolean, data: any}
       if ('isOk' in data) {
+        // Check for token expiration using error codes
+        if (!data.isOk && data.data?.rcode) {
+          const errorCode = data.data.rcode;
+
+          // Token expired/invalid - trigger automatic logout
+          if (errorCode === 4101 || errorCode === 4404) {
+            // INVALID_ACCESS_TOKEN or USER_NOT_ACTIVATED
+            console.warn(
+              'Authentication failed - token expired or user deactivated:',
+              errorCode
+            );
+            this.handleAuthenticationFailure();
+            throw new Error('Session expired. Please log in again.');
+          }
+        }
+
         return {
           success: data.isOk,
           data: data.data,
@@ -129,7 +167,7 @@ class ApiClient {
 
       return data as ApiResponse<T>;
     } catch (error) {
-      clearTimeout(timeoutId);
+      window.clearTimeout(timeoutId);
 
       if (error instanceof Error) {
         if (error.name === 'AbortError') {
@@ -175,12 +213,8 @@ class ApiClient {
 
     const userData = response.data;
 
-    console.log('Login response userData:', userData);
-
     // Check if user has proper appRole - this is critical for backend access
     if (!userData.appRole) {
-      console.warn('User has no appRole set, attempting to set to member...');
-
       // Try to update user to have member role - this might be needed for first-time users
       try {
         await this.request(`/users/${userData._id}`, {
@@ -254,8 +288,6 @@ class ApiClient {
       permissions: [],
     };
 
-    console.log('Final auth session:', authSession);
-
     return authSession;
   }
 
@@ -312,6 +344,23 @@ class ApiClient {
     return response.data;
   }
 
+  // Get all companies for current user (for company selector)
+  async getAllUserCompanies(): Promise<Company[]> {
+    const response = await this.request<{
+      data: Company[];
+      pagination: { page: number; limit: number; total: number };
+    }>('/company/get');
+
+    if (!response.success || !response.data) {
+      throw new Error(
+        response.error?.message || 'Failed to fetch user companies'
+      );
+    }
+
+    // Extract the companies array from the paginated response
+    return response.data.data;
+  }
+
   async createCompany(company: CreateCompanyRequest): Promise<Company> {
     const response = await this.request<Company>('/company/post', {
       method: 'POST',
@@ -341,25 +390,57 @@ class ApiClient {
     return response.data;
   }
 
-  // Account methods
-  async getAccounts(companyId: string): Promise<Account[]> {
-    const response = await this.request<Account[]>(
-      `/accounts/get?companyId=${companyId}`
-    );
+  // Set default company for the current user
+  async setDefaultCompany(companyId: string): Promise<{
+    message: string;
+    defaultCompanyId: string;
+  }> {
+    const response = await this.request<{
+      message: string;
+      defaultCompanyId: string;
+    }>(`/company/patch/set-default/${companyId}`, {
+      method: 'PATCH',
+    });
 
     if (!response.success || !response.data) {
-      throw new Error(response.error?.message || 'Failed to fetch accounts');
+      throw new Error(
+        response.error?.message || 'Failed to set default company'
+      );
     }
 
     return response.data;
   }
 
+  // Account methods
+  async getAccounts(companyId?: string): Promise<Account[]> {
+    const queryParams = companyId ? `?companyId=${companyId}` : '';
+    const response = await this.request<{
+      accounts: Account[];
+      hierarchy: Account[];
+      meta: {
+        total: number;
+        active: number;
+        inactive: number;
+        system: number;
+        withTransactions: number;
+      };
+    }>(`/accounts/get${queryParams}`);
+
+    if (!response.success || !response.data) {
+      throw new Error(response.error?.message || 'Failed to fetch accounts');
+    }
+
+    // Return just the accounts array for backward compatibility
+    return response.data.accounts;
+  }
+
   // Enhanced method to get accounts with hierarchy and metadata
   async getAccountsEnhanced(
-    companyId: string
+    companyId?: string
   ): Promise<BackendResponse<AccountListResponse>> {
+    const queryParams = companyId ? `?companyId=${companyId}` : '';
     const response = await this.request<BackendResponse<AccountListResponse>>(
-      `/accounts/get?companyId=${companyId}&toClient=true`
+      `/accounts/get${queryParams}`
     );
 
     if (!response.success || !response.data) {
@@ -371,8 +452,11 @@ class ApiClient {
     return response.data;
   }
 
-  async getAccount(accountId: string): Promise<Account> {
-    const response = await this.request<Account>(`/accounts/get/${accountId}`);
+  async getAccount(accountId: string, companyId?: string): Promise<Account> {
+    const queryParams = companyId ? `?companyId=${companyId}` : '';
+    const response = await this.request<Account>(
+      `/accounts/get/${accountId}${queryParams}`
+    );
 
     if (!response.success || !response.data) {
       throw new Error(response.error?.message || 'Failed to fetch account');
@@ -460,10 +544,13 @@ class ApiClient {
     return response.data;
   }
 
+  // Personal account template methods removed - no longer supported
+  // Migration note: All companies now use business chart of accounts only
+
   // Transaction methods
   async getTransactions(
     filters: TransactionFilters
-  ): Promise<PaginatedResponse<Transaction>> {
+  ): Promise<TransactionListResponse> {
     const params = new URLSearchParams();
 
     Object.entries(filters).forEach(([key, value]) => {
@@ -476,7 +563,7 @@ class ApiClient {
       }
     });
 
-    const response = await this.request<PaginatedResponse<Transaction>>(
+    const response = await this.request<TransactionListResponse>(
       `/transactions/get?${params}`
     );
 
@@ -489,9 +576,13 @@ class ApiClient {
     return response.data;
   }
 
-  async getTransaction(transactionId: string): Promise<Transaction> {
+  async getTransaction(
+    transactionId: string,
+    companyId?: string
+  ): Promise<Transaction> {
+    const queryParams = companyId ? `?companyId=${companyId}` : '';
     const response = await this.request<Transaction>(
-      `/transactions/get/${transactionId}`
+      `/transactions/get/${transactionId}${queryParams}`
     );
 
     if (!response.success || !response.data) {
@@ -555,6 +646,71 @@ class ApiClient {
     if (!response.success || !response.data) {
       throw new Error(
         response.error?.message || 'Failed to create expense transaction'
+      );
+    }
+
+    return response.data;
+  }
+
+  async updateTransaction(
+    transactionId: string,
+    transaction: Partial<CreateTransactionRequest>,
+    companyId?: string
+  ): Promise<Transaction> {
+    const queryParams = companyId ? `?companyId=${companyId}` : '';
+    const response = await this.request<Transaction>(
+      `/transactions/patch/${transactionId}${queryParams}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(transaction),
+      }
+    );
+
+    if (!response.success || !response.data) {
+      throw new Error(
+        response.error?.message || 'Failed to update transaction'
+      );
+    }
+
+    return response.data;
+  }
+
+  async deleteTransaction(
+    transactionId: string,
+    companyId?: string
+  ): Promise<void> {
+    const queryParams = companyId ? `?companyId=${companyId}` : '';
+    const response = await this.request<void>(
+      `/transactions/delete/${transactionId}${queryParams}`,
+      {
+        method: 'DELETE',
+      }
+    );
+
+    if (!response.success) {
+      throw new Error(
+        response.error?.message || 'Failed to delete transaction'
+      );
+    }
+  }
+
+  async reconcileTransaction(
+    transactionId: string,
+    isReconciled: boolean,
+    companyId?: string
+  ): Promise<Transaction> {
+    const queryParams = companyId ? `?companyId=${companyId}` : '';
+    const response = await this.request<Transaction>(
+      `/transactions/post/reconcile/${transactionId}${queryParams}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ isReconciled }),
+      }
+    );
+
+    if (!response.success || !response.data) {
+      throw new Error(
+        response.error?.message || 'Failed to reconcile transaction'
       );
     }
 
@@ -791,6 +947,56 @@ class ApiClient {
     }
 
     return response.data;
+  }
+  private handleAuthenticationFailure(): void {
+    // Import authStore dynamically to avoid circular dependency
+    import('@/lib/auth/authStore').then(({ authStore }) => {
+      console.log('Handling authentication failure - logging out user');
+
+      // Only show notification if user was actually logged in
+      const wasLoggedIn = authStore.isAuthenticated;
+
+      // Show user-friendly notification only if user was logged in
+      if (wasLoggedIn && typeof window !== 'undefined') {
+        // Create a temporary notification
+        const notification = document.createElement('div');
+        notification.innerHTML = `
+          <div class="fixed top-4 right-4 z-50 max-w-sm rounded-lg bg-red-50 p-4 shadow-lg border border-red-200">
+            <div class="flex items-center">
+              <div class="mr-3 flex h-8 w-8 items-center justify-center rounded-full bg-red-100">
+                <svg class="h-5 w-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+              </div>
+              <div>
+                <h4 class="text-sm font-semibold text-red-800">Session Expired</h4>
+                <p class="text-xs text-red-700">Redirecting to login...</p>
+              </div>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(notification);
+
+        // Remove notification after 3 seconds
+        window.setTimeout(() => {
+          if (notification.parentNode) {
+            notification.parentNode.removeChild(notification);
+          }
+        }, 3000);
+      }
+
+      // Clear auth and redirect only if was logged in
+      if (wasLoggedIn) {
+        authStore.clearAuth();
+
+        // Redirect to login page after a short delay
+        window.setTimeout(() => {
+          if (typeof window !== 'undefined') {
+            window.location.href = '/login';
+          }
+        }, 1500);
+      }
+    });
   }
 }
 

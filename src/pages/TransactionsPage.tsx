@@ -1,17 +1,28 @@
-import { createSignal, For, Show, createMemo } from 'solid-js';
+import {
+  createSignal,
+  For,
+  Show,
+  createMemo,
+  createEffect,
+  onCleanup,
+} from 'solid-js';
 import { createQuery } from '@tanstack/solid-query';
 import MainLayout from '@/components/layout/MainLayout';
-import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
+import { KobalteButton } from '@/components/ui/KobalteButton';
+import { EmoneyInput } from '@/components/ui/EmoneyInput';
+import { EmoneySelect } from '@/components/ui/EmoneySelect';
+import { CreateExpenseModal } from '@/components/transactions/CreateExpenseModal';
+import { CreateRevenueModal } from '@/components/transactions/CreateRevenueModal';
+import { CreateJournalEntryModal } from '@/components/transactions/CreateJournalEntryModal';
 import { apiClient } from '@/lib/api/client';
 import { authStore } from '@/lib/auth/authStore';
 import type { Transaction, TransactionFilters } from '@/types';
 
 export default function TransactionsPage() {
   const [filters, setFilters] = createSignal<Partial<TransactionFilters>>({
-    startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+    startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000)
       .toISOString()
-      .split('T')[0], // 30 days ago
+      .split('T')[0], // 90 days ago (extended to catch more transactions)
     endDate: new Date().toISOString().split('T')[0], // today
     accountId: undefined,
     contactId: undefined,
@@ -32,38 +43,67 @@ export default function TransactionsPage() {
     'journal' | 'expense' | 'revenue'
   >('journal');
 
+  // Debounced search input
+  const [searchInput, setSearchInput] = createSignal('');
+
+  // Debounced search effect
+  createEffect(() => {
+    const search = searchInput();
+    let timeoutId: number;
+
+    if (typeof window !== 'undefined') {
+      timeoutId = window.setTimeout(() => {
+        setFilters((prev) => ({ ...prev, search }));
+      }, 500); // 500ms debounce
+
+      onCleanup(() => {
+        if (timeoutId) window.clearTimeout(timeoutId);
+      });
+    }
+  });
+
   // Fetch transactions
   const transactionsQuery = createQuery(() => ({
-    queryKey: ['transactions', authStore.selectedCompany?._id, filters()],
-    queryFn: () => {
-      if (!authStore.selectedCompany)
-        return Promise.resolve({
-          data: [],
-          pagination: { page: 1, limit: 50, total: 0, totalPages: 0 },
-        });
+    queryKey: [
+      'transactions',
+      authStore.selectedCompany?._id,
+      filters(),
+    ] as const,
+    queryFn: async () => {
+      if (!authStore.selectedCompany) {
+        return {
+          transactions: [],
+          pagination: { page: 1, limit: 50, total: 0, pages: 0 },
+        };
+      }
+
       const filterParams = {
         ...filters(),
         companyId: authStore.selectedCompany._id,
       };
-      return apiClient.getTransactions(filterParams as TransactionFilters);
+
+      return await apiClient.getTransactions(
+        filterParams as TransactionFilters
+      );
     },
     enabled: !!authStore.selectedCompany,
   }));
 
   // Fetch accounts for dropdown
   const accountsQuery = createQuery(() => ({
-    queryKey: ['accounts', authStore.selectedCompany?._id],
-    queryFn: () =>
-      authStore.selectedCompany
-        ? apiClient.getAccounts(authStore.selectedCompany._id)
-        : Promise.resolve([]),
+    queryKey: ['accounts', authStore.selectedCompany?._id] as const,
+    queryFn: async () => {
+      if (!authStore.selectedCompany) return [];
+      return apiClient.getAccounts(authStore.selectedCompany._id);
+    },
     enabled: !!authStore.selectedCompany,
   }));
 
   // Sorted transactions
   const sortedTransactions = createMemo(() => {
     const queryData = transactionsQuery.data;
-    const transactions = queryData && 'data' in queryData ? queryData.data : [];
+    const transactions = queryData?.transactions || [];
+
     return transactions.sort((a: Transaction, b: Transaction) => {
       const factor = sortOrder() === 'asc' ? 1 : -1;
 
@@ -73,7 +113,7 @@ export default function TransactionsPage() {
             factor * (new Date(a.date).getTime() - new Date(b.date).getTime())
           );
         case 'amount':
-          return factor * (a.totalAmount - b.totalAmount);
+          return factor * (getTransactionAmount(a) - getTransactionAmount(b));
         case 'description':
           return factor * a.description.localeCompare(b.description);
         default:
@@ -86,7 +126,25 @@ export default function TransactionsPage() {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
+      minimumFractionDigits: 2,
     }).format(amount);
+  };
+
+  // Helper to safely get account name from entry
+  const getAccountName = (entry: Transaction['entries'][0]): string => {
+    if (entry.accountName) return entry.accountName;
+
+    // Handle case where account is populated as an object
+    if (typeof entry.account !== 'string') {
+      const accountObj = entry.account as {
+        name?: string;
+        code?: string;
+        _id?: string;
+      };
+      return accountObj.name || accountObj.code || accountObj._id || 'Unknown';
+    }
+
+    return entry.account;
   };
 
   const formatDate = (dateString: string) => {
@@ -125,6 +183,22 @@ export default function TransactionsPage() {
     }
   };
 
+  // Get the actual transaction amount (not doubled)
+  // In double-entry accounting, debit total = credit total
+  // So we take the max of either side to get the actual amount
+  const getTransactionAmount = (transaction: Transaction) => {
+    const totalDebit = transaction.entries.reduce(
+      (sum, entry) => sum + (entry.debit || 0),
+      0
+    );
+    const totalCredit = transaction.entries.reduce(
+      (sum, entry) => sum + (entry.credit || 0),
+      0
+    );
+    // Use the max since they should be equal in a balanced transaction
+    return Math.max(totalDebit, totalCredit);
+  };
+
   const updateFilters = (newFilters: Partial<TransactionFilters>) => {
     setFilters((prev) => ({ ...prev, ...newFilters }));
   };
@@ -150,298 +224,281 @@ export default function TransactionsPage() {
 
   return (
     <MainLayout>
-      <div class="space-y-6">
+      <div class="px-4 py-6 sm:px-6 lg:px-8">
         {/* Header */}
-        <div class="flex items-center justify-between">
-          <div>
-            <h1 class="text-2xl font-bold text-gray-900">Transactions</h1>
-            <p class="mt-1 text-gray-600">
-              View and manage all financial transactions
-            </p>
-          </div>
-          <div class="flex space-x-2">
-            <Button
-              variant="secondary"
-              onClick={() => handleCreateTransaction('expense')}
-            >
-              <svg
-                class="mr-2 h-5 w-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+        <div class="mb-6 border-b border-gray-200 pb-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <h1 class="text-3xl font-bold text-gray-900">Transactions</h1>
+              <p class="mt-2 text-sm text-gray-600">
+                View and manage all financial transactions
+              </p>
+            </div>
+            <div class="flex space-x-2">
+              <KobalteButton
+                variant="secondary"
+                onClick={() => handleCreateTransaction('expense')}
               >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M20 12H4"
-                />
-              </svg>
-              Add Expense
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => handleCreateTransaction('revenue')}
-            >
-              <svg
-                class="mr-2 h-5 w-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+                <svg
+                  class="mr-2 h-5 w-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M20 12H4"
+                  />
+                </svg>
+                Add Expense
+              </KobalteButton>
+              <KobalteButton
+                variant="secondary"
+                onClick={() => handleCreateTransaction('revenue')}
               >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M12 4v16m8-8H4"
-                />
-              </svg>
-              Add Revenue
-            </Button>
-            <Button onClick={() => handleCreateTransaction('journal')}>
-              <svg
-                class="mr-2 h-5 w-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="2"
-                  d="M12 4v16m8-8H4"
-                />
-              </svg>
-              Journal Entry
-            </Button>
+                <svg
+                  class="mr-2 h-5 w-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M12 4v16m8-8H4"
+                  />
+                </svg>
+                Add Revenue
+              </KobalteButton>
+              <KobalteButton onClick={() => handleCreateTransaction('journal')}>
+                <svg
+                  class="mr-2 h-5 w-5"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M12 4v16m8-8H4"
+                  />
+                </svg>
+                Journal Entry
+              </KobalteButton>
+            </div>
           </div>
         </div>
 
-        {/* Filters */}
-        <div class="rounded-lg bg-white p-6 shadow">
+        {/* Filters - Always visible */}
+        <div class="mb-8 rounded-lg bg-white p-6 shadow">
           <div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
             <div>
-              <label class="mb-2 block text-sm font-medium text-gray-700">
-                From Date
-              </label>
-              <Input
+              <EmoneyInput
+                label="From Date"
                 type="date"
                 value={filters().startDate}
-                onInput={(e) =>
-                  updateFilters({ startDate: e.currentTarget.value })
-                }
+                onInput={(value: string) => updateFilters({ startDate: value })}
               />
             </div>
             <div>
-              <label class="mb-2 block text-sm font-medium text-gray-700">
-                To Date
-              </label>
-              <Input
+              <EmoneyInput
+                label="To Date"
                 type="date"
                 value={filters().endDate}
-                onInput={(e) =>
-                  updateFilters({ endDate: e.currentTarget.value })
+                onInput={(value: string) => updateFilters({ endDate: value })}
+              />
+            </div>
+            <div>
+              <EmoneySelect
+                label="Account"
+                placeholder="All Accounts"
+                value={filters().accountId || ''}
+                options={[
+                  { value: '', label: 'All Accounts' },
+                  ...(accountsQuery.data || []).map((account) => ({
+                    value: account._id,
+                    label: `${account.code} - ${account.name}`,
+                  })),
+                ]}
+                onChange={(value) =>
+                  updateFilters({
+                    accountId: value || undefined,
+                  })
                 }
               />
             </div>
             <div>
-              <label class="mb-2 block text-sm font-medium text-gray-700">
-                Account
-              </label>
-              <select
-                class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={filters().accountId || ''}
-                onChange={(e) =>
-                  updateFilters({
-                    accountId: e.currentTarget.value || undefined,
-                  })
-                }
-              >
-                <option value="">All Accounts</option>
-                <For each={accountsQuery.data || []}>
-                  {(account) => (
-                    <option value={account._id}>
-                      {account.code} - {account.name}
-                    </option>
-                  )}
-                </For>
-              </select>
-            </div>
-            <div>
-              <label class="mb-2 block text-sm font-medium text-gray-700">
-                Type
-              </label>
-              <select
-                class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
+              <EmoneySelect
+                label="Type"
+                placeholder="All Types"
                 value={filters().sourceType || ''}
-                onChange={(e) => {
-                  const value = e.currentTarget.value;
+                options={[
+                  { value: '', label: 'All Types' },
+                  { value: 'MANUAL', label: 'Manual Entry' },
+                  { value: 'INVOICE', label: 'Invoice' },
+                  { value: 'EXPENSE', label: 'Expense' },
+                  { value: 'PAYMENT', label: 'Payment' },
+                ]}
+                onChange={(value) => {
                   updateFilters({
                     sourceType: value
                       ? (value as 'MANUAL' | 'INVOICE' | 'EXPENSE' | 'PAYMENT')
                       : undefined,
                   });
                 }}
-              >
-                <option value="">All Types</option>
-                <option value="MANUAL">Manual Entry</option>
-                <option value="INVOICE">Invoice</option>
-                <option value="EXPENSE">Expense</option>
-                <option value="PAYMENT">Payment</option>
-              </select>
+              />
             </div>
           </div>
 
           <div class="mt-4">
-            <label class="mb-2 block text-sm font-medium text-gray-700">
-              Search Description
-            </label>
-            <Input
-              type="text"
+            <EmoneyInput
+              label="Search Description"
+              type="search"
               placeholder="Search transactions..."
-              value={filters().search || ''}
-              onInput={(e) => updateFilters({ search: e.currentTarget.value })}
+              value={searchInput()}
+              onInput={setSearchInput}
             />
           </div>
         </div>
 
         {/* Transactions Table */}
-        <div class="overflow-hidden rounded-lg bg-white shadow">
+        <div class="relative overflow-hidden rounded-lg bg-white shadow">
+          {/* Loading overlay for table only */}
+          <Show when={transactionsQuery.isFetching}>
+            <div class="absolute inset-0 z-10 flex items-center justify-center bg-white bg-opacity-75">
+              <div class="h-8 w-8 animate-spin rounded-full border-b-2 border-blue-600" />
+            </div>
+          </Show>
+
           <Show
-            when={!transactionsQuery.isLoading}
+            when={sortedTransactions().length > 0}
             fallback={
               <div class="p-8 text-center">
-                <div class="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-b-2 border-blue-600" />
-                <p class="text-gray-600">Loading transactions...</p>
+                <svg
+                  class="mx-auto mb-4 h-12 w-12 text-gray-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                  />
+                </svg>
+                <h3 class="mb-2 text-lg font-medium text-gray-900">
+                  No transactions found
+                </h3>
+                <p class="mb-4 text-gray-500">
+                  Try adjusting your filters or create your first transaction.
+                </p>
+                <KobalteButton
+                  onClick={() => handleCreateTransaction('journal')}
+                >
+                  Create Transaction
+                </KobalteButton>
               </div>
             }
           >
-            <Show
-              when={sortedTransactions().length > 0}
-              fallback={
-                <div class="p-8 text-center">
-                  <svg
-                    class="mx-auto mb-4 h-12 w-12 text-gray-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                    />
-                  </svg>
-                  <h3 class="mb-2 text-lg font-medium text-gray-900">
-                    No transactions found
-                  </h3>
-                  <p class="mb-4 text-gray-500">
-                    Try adjusting your filters or create your first transaction.
-                  </p>
-                  <Button onClick={() => handleCreateTransaction('journal')}>
-                    Create Transaction
-                  </Button>
-                </div>
-              }
-            >
-              <div class="overflow-x-auto">
-                <table class="min-w-full divide-y divide-gray-200">
-                  <thead class="bg-gray-50">
-                    <tr>
-                      <th
-                        class="cursor-pointer px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 hover:bg-gray-100"
-                        onClick={() => handleSort('date')}
-                      >
-                        Date
-                        <Show when={sortBy() === 'date'}>
-                          <span class="ml-1">
-                            {sortOrder() === 'asc' ? '↑' : '↓'}
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th
+                      class="cursor-pointer px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 hover:bg-gray-100"
+                      onClick={() => handleSort('date')}
+                    >
+                      Date
+                      <Show when={sortBy() === 'date'}>
+                        <span class="ml-1">
+                          {sortOrder() === 'asc' ? '↑' : '↓'}
+                        </span>
+                      </Show>
+                    </th>
+                    <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
+                      Type
+                    </th>
+                    <th
+                      class="cursor-pointer px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 hover:bg-gray-100"
+                      onClick={() => handleSort('description')}
+                    >
+                      Description
+                      <Show when={sortBy() === 'description'}>
+                        <span class="ml-1">
+                          {sortOrder() === 'asc' ? '↑' : '↓'}
+                        </span>
+                      </Show>
+                    </th>
+                    <th
+                      class="cursor-pointer px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 hover:bg-gray-100"
+                      onClick={() => handleSort('amount')}
+                    >
+                      Amount
+                      <Show when={sortBy() === 'amount'}>
+                        <span class="ml-1">
+                          {sortOrder() === 'asc' ? '↑' : '↓'}
+                        </span>
+                      </Show>
+                    </th>
+                    <th class="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 bg-white">
+                  <For each={sortedTransactions()}>
+                    {(transaction) => (
+                      <tr class="hover:bg-gray-50">
+                        <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-900">
+                          {formatDate(transaction.date)}
+                        </td>
+                        <td class="whitespace-nowrap px-6 py-4">
+                          <span
+                            class={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${getTransactionTypeColor(transaction.sourceType)}`}
+                          >
+                            {getTransactionTypeLabel(transaction.sourceType)}
                           </span>
-                        </Show>
-                      </th>
-                      <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">
-                        Type
-                      </th>
-                      <th
-                        class="cursor-pointer px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 hover:bg-gray-100"
-                        onClick={() => handleSort('description')}
-                      >
-                        Description
-                        <Show when={sortBy() === 'description'}>
-                          <span class="ml-1">
-                            {sortOrder() === 'asc' ? '↑' : '↓'}
-                          </span>
-                        </Show>
-                      </th>
-                      <th
-                        class="cursor-pointer px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500 hover:bg-gray-100"
-                        onClick={() => handleSort('amount')}
-                      >
-                        Amount
-                        <Show when={sortBy() === 'amount'}>
-                          <span class="ml-1">
-                            {sortOrder() === 'asc' ? '↑' : '↓'}
-                          </span>
-                        </Show>
-                      </th>
-                      <th class="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">
-                        Actions
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-gray-200 bg-white">
-                    <For each={sortedTransactions()}>
-                      {(transaction) => (
-                        <tr class="hover:bg-gray-50">
-                          <td class="whitespace-nowrap px-6 py-4 text-sm text-gray-900">
-                            {formatDate(transaction.date)}
-                          </td>
-                          <td class="whitespace-nowrap px-6 py-4">
-                            <span
-                              class={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${getTransactionTypeColor(transaction.sourceType)}`}
-                            >
-                              {getTransactionTypeLabel(transaction.sourceType)}
-                            </span>
-                          </td>
-                          <td class="px-6 py-4 text-sm text-gray-900">
-                            <div class="max-w-xs truncate">
-                              {transaction.description}
+                        </td>
+                        <td class="px-6 py-4 text-sm text-gray-900">
+                          <div class="max-w-xs truncate">
+                            {transaction.description}
+                          </div>
+                          <Show when={transaction.reference}>
+                            <div class="text-xs text-gray-500">
+                              Ref: {transaction.reference}
                             </div>
-                            <Show when={transaction.reference}>
-                              <div class="text-xs text-gray-500">
-                                Ref: {transaction.reference}
-                              </div>
-                            </Show>
-                          </td>
-                          <td class="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
-                            {formatCurrency(transaction.totalAmount)}
-                          </td>
-                          <td class="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
-                            <button
-                              class="mr-4 text-blue-600 hover:text-blue-900"
-                              onClick={() =>
-                                setSelectedTransaction(transaction)
-                              }
-                            >
-                              View
-                            </button>
-                            <button
-                              class="text-green-600 hover:text-green-900"
-                              onClick={() => {
-                                /* TODO: Edit transaction */
-                              }}
-                            >
-                              Edit
-                            </button>
-                          </td>
-                        </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
-              </div>
-            </Show>
+                          </Show>
+                        </td>
+                        <td class="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
+                          {formatCurrency(getTransactionAmount(transaction))}
+                        </td>
+                        <td class="whitespace-nowrap px-6 py-4 text-right text-sm font-medium">
+                          <button
+                            class="mr-4 text-blue-600 hover:text-blue-900"
+                            onClick={() => setSelectedTransaction(transaction)}
+                          >
+                            View
+                          </button>
+                          <button
+                            class="text-green-600 hover:text-green-900"
+                            onClick={() => {
+                              /* TODO: Edit transaction */
+                            }}
+                          >
+                            Edit
+                          </button>
+                        </td>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
+            </div>
           </Show>
         </div>
       </div>
@@ -543,7 +600,7 @@ export default function TransactionsPage() {
                               {(entry) => (
                                 <tr>
                                   <td class="px-4 py-2 text-sm text-gray-900">
-                                    {entry.accountName || entry.account}
+                                    {getAccountName(entry)}
                                   </td>
                                   <td class="px-4 py-2 text-right text-sm text-gray-900">
                                     {entry.debit > 0
@@ -578,47 +635,38 @@ export default function TransactionsPage() {
               </Show>
 
               <div class="mt-6 flex justify-end border-t pt-4">
-                <Button
+                <KobalteButton
                   variant="secondary"
                   onClick={() => setSelectedTransaction(null)}
                 >
                   Close
-                </Button>
+                </KobalteButton>
               </div>
             </div>
           </div>
         </div>
       </Show>
 
-      {/* Create Transaction Modal - TODO: Implement based on modalType */}
-      <Show when={showCreateModal()}>
-        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-          <div class="w-full max-w-lg rounded-lg bg-white p-6">
-            <h3 class="mb-4 text-lg font-medium text-gray-900">
-              Create{' '}
-              {modalType() === 'journal'
-                ? 'Journal Entry'
-                : modalType() === 'expense'
-                  ? 'Expense'
-                  : 'Revenue'}
-            </h3>
-            <p class="mb-4 text-gray-600">
-              Transaction form will be implemented here.
-            </p>
-            <div class="flex justify-end space-x-3">
-              <Button
-                variant="secondary"
-                onClick={() => setShowCreateModal(false)}
-              >
-                Cancel
-              </Button>
-              <Button onClick={handleTransactionCreated}>
-                Create Transaction
-              </Button>
-            </div>
-          </div>
-        </div>
-      </Show>
+      {/* Create Journal Entry Modal */}
+      <CreateJournalEntryModal
+        isOpen={showCreateModal() && modalType() === 'journal'}
+        onClose={() => setShowCreateModal(false)}
+        onSuccess={handleTransactionCreated}
+      />
+
+      {/* Create Expense Modal */}
+      <CreateExpenseModal
+        isOpen={showCreateModal() && modalType() === 'expense'}
+        onClose={() => setShowCreateModal(false)}
+        onSuccess={handleTransactionCreated}
+      />
+
+      {/* Create Revenue Modal */}
+      <CreateRevenueModal
+        isOpen={showCreateModal() && modalType() === 'revenue'}
+        onClose={() => setShowCreateModal(false)}
+        onSuccess={handleTransactionCreated}
+      />
     </MainLayout>
   );
 }

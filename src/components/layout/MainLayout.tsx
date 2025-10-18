@@ -1,7 +1,8 @@
-import { Show, createSignal } from 'solid-js';
+import { Show, For, createSignal } from 'solid-js';
 import type { JSX } from 'solid-js';
 import { A, useNavigate } from '@solidjs/router';
 import { authStore } from '@/lib/auth/authStore';
+import { CompanySelector } from '@/components/ui/CompanySelector';
 
 interface LayoutProps {
   children: JSX.Element;
@@ -159,30 +160,32 @@ export function MainLayout(props: LayoutProps) {
 
         <nav class="mt-5 px-2">
           <div class="space-y-1">
-            {navigationItems.map((item) => (
-              <A
-                href={item.href}
-                class="group flex items-center rounded-md px-2 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
-                activeClass="bg-blue-50 border-r-4 border-blue-600 text-blue-700"
-              >
-                {getIcon(item.icon)}
-                <span class="ml-3">{item.name}</span>
-              </A>
-            ))}
+            <For each={navigationItems}>
+              {(item: { name: string; href: string; icon: string }) => (
+                <A
+                  href={item.href}
+                  class="group flex items-center rounded-md px-2 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+                  activeClass="bg-blue-50 border-r-4 border-blue-600 text-blue-700"
+                >
+                  {getIcon(item.icon)}
+                  <span class="ml-3">{item.name}</span>
+                </A>
+              )}
+            </For>
           </div>
         </nav>
 
-        {/* Company Info & User Menu */}
+        {/* Company Selector & User Menu */}
         <div class="absolute bottom-0 left-0 right-0 border-t border-gray-200 p-4">
-          <Show when={authStore.selectedCompany}>
-            <div class="mb-3 rounded-md bg-gray-50 p-2">
-              <p class="text-xs font-medium text-gray-500">Current Company</p>
-              <p class="text-sm font-semibold text-gray-900">
-                {authStore.selectedCompany?.name}
+          <div class="mb-3">
+            <p class="mb-2 text-xs font-medium text-gray-500">Company</p>
+            <CompanySelector class="w-full" />
+            <Show when={authStore.selectedCompany && authStore.userRole}>
+              <p class="mt-1 text-xs text-gray-500">
+                Role: {authStore.userRole}
               </p>
-              <p class="text-xs text-gray-500">Role: {authStore.userRole}</p>
-            </div>
-          </Show>
+            </Show>
+          </div>
 
           <div class="flex items-center justify-between">
             <div class="flex items-center">
@@ -250,29 +253,16 @@ export function MainLayout(props: LayoutProps) {
               />
             </svg>
           </button>
-          <div class="flex flex-1 justify-between px-4">
-            <div class="flex flex-1">
-              <div class="flex w-full md:ml-0">
-                <div class="relative w-full text-gray-400 focus-within:text-gray-600">
-                  <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center">
-                    <svg
-                      class="h-5 w-5"
-                      fill="currentColor"
-                      viewBox="0 0 20 20"
-                    >
-                      <path
-                        fill-rule="evenodd"
-                        d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"
-                        clip-rule="evenodd"
-                      />
-                    </svg>
-                  </div>
-                  <input
-                    class="block h-full w-full border-transparent py-2 pl-8 pr-3 text-gray-900 placeholder-gray-500 focus:border-transparent focus:placeholder-gray-400 focus:outline-none focus:ring-0 sm:text-sm"
-                    placeholder="Search transactions, accounts..."
-                    type="search"
-                  />
-                </div>
+          <div class="flex flex-1 items-center justify-between px-4">
+            <div class="flex items-center space-x-4">
+              <CompanySelector class="max-w-[200px]" />
+            </div>
+            <div class="flex items-center">
+              {/* User avatar for mobile */}
+              <div class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-600">
+                <span class="text-sm font-medium text-white">
+                  {authStore.user?.name?.first?.charAt(0) || 'U'}
+                </span>
               </div>
             </div>
           </div>

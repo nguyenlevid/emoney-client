@@ -3,14 +3,17 @@ import { Suspense, onMount } from 'solid-js';
 import { QueryClient, QueryClientProvider } from '@tanstack/solid-query';
 import LoginPage from '@/pages/auth/LoginPage';
 import ForgotPasswordPage from '@/pages/auth/ForgotPasswordPage';
-import CompanySelector from '@/pages/auth/CompanySelector';
 import CreateCompanyPage from '@/pages/auth/CreateCompanyPage';
 import DashboardPage from '@/pages/DashboardPage';
 import AccountsPage from '@/pages/AccountsPage';
 import TransactionsPage from '@/pages/TransactionsPage';
+import FuturisticDemo from '@/pages/FuturisticDemo';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
+import { AuthRedirect } from '@/components/auth/AuthRedirect';
 import MainLayout from '@/components/layout/MainLayout';
 import { authStore } from '@/lib/auth/authStore';
+import { TokenExpirationNotifier } from '@/components/auth/TokenExpirationNotifier';
+import { ToastContainer } from '@/components/ui/ToastContainer';
 import './index.css';
 
 function App() {
@@ -30,28 +33,25 @@ function App() {
 
   return (
     <QueryClientProvider client={queryClient}>
+      <TokenExpirationNotifier />
+      <ToastContainer />
       <Router>
         <Suspense
           fallback={
-            <div class="flex min-h-screen items-center justify-center">
+            <div class="flex min-h-screen items-center justify-center bg-background">
               <div class="text-center">
-                <div class="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-b-2 border-blue-600" />
-                <p class="text-gray-600">Loading...</p>
+                <div class="mx-auto mb-4 h-12 w-12 animate-spin rounded-full border-2 border-border border-t-accent shadow-glow" />
+                <p class="font-medium text-textSecondary">
+                  Initializing quantum systems...
+                </p>
               </div>
             </div>
           }
         >
-          <Route path="/" component={LoginPage} />
+          <Route path="/" component={AuthRedirect} />
           <Route path="/login" component={LoginPage} />
           <Route path="/forgot-password" component={ForgotPasswordPage} />
-          <Route
-            path="/company-selector"
-            component={() => (
-              <ProtectedRoute>
-                <CompanySelector />
-              </ProtectedRoute>
-            )}
-          />
+
           <Route
             path="/create-company"
             component={() => (
@@ -94,8 +94,10 @@ function App() {
               <ProtectedRoute requireCompany>
                 <MainLayout>
                   <div class="px-4 py-6 sm:px-6 lg:px-8">
-                    <h1 class="text-3xl font-bold text-gray-900">Contacts</h1>
-                    <p class="mt-4 text-gray-600">
+                    <h1 class="text-3xl font-bold text-textPrimary">
+                      Contacts
+                    </h1>
+                    <p class="mt-4 text-textSecondary">
                       Contact management coming soon...
                     </p>
                   </div>
@@ -109,8 +111,8 @@ function App() {
               <ProtectedRoute requireCompany>
                 <MainLayout>
                   <div class="px-4 py-6 sm:px-6 lg:px-8">
-                    <h1 class="text-3xl font-bold text-gray-900">Reports</h1>
-                    <p class="mt-4 text-gray-600">
+                    <h1 class="text-3xl font-bold text-textPrimary">Reports</h1>
+                    <p class="mt-4 text-textSecondary">
                       Financial reports coming soon...
                     </p>
                   </div>
@@ -124,8 +126,10 @@ function App() {
               <ProtectedRoute requireCompany>
                 <MainLayout>
                   <div class="px-4 py-6 sm:px-6 lg:px-8">
-                    <h1 class="text-3xl font-bold text-gray-900">Settings</h1>
-                    <p class="mt-4 text-gray-600">
+                    <h1 class="text-3xl font-bold text-textPrimary">
+                      Settings
+                    </h1>
+                    <p class="mt-4 text-textSecondary">
                       Settings configuration coming soon...
                     </p>
                   </div>
@@ -133,6 +137,7 @@ function App() {
               </ProtectedRoute>
             )}
           />
+          <Route path="/demo" component={FuturisticDemo} />
         </Suspense>
       </Router>
     </QueryClientProvider>

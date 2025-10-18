@@ -43,6 +43,7 @@ export interface AuthState {
   memberships: Membership[];
   isAuthenticated: boolean;
   isLoading: boolean;
+  isInitialized: boolean;
 }
 
 // ✅ PROPER AUTH STATE STRUCTURE
@@ -53,6 +54,7 @@ const [authState, setAuthState] = createStore<AuthState>({
   memberships: [],
   isAuthenticated: false,
   isLoading: false,
+  isInitialized: false,
 });
 
 export { authState };
@@ -103,8 +105,8 @@ export const authStore = {
     setAuthState('userRole', role);
 
     // Store in localStorage for persistence
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      window.localStorage.setItem(
         'selected_company',
         JSON.stringify({ company, role })
       );
@@ -134,8 +136,11 @@ export const authStore = {
       this.setUser(userData);
 
       // Store user session
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('auth_user', JSON.stringify(userData));
+      if (
+        typeof window !== 'undefined' &&
+        typeof localStorage !== 'undefined'
+      ) {
+        window.localStorage.setItem('auth_user', JSON.stringify(userData));
       }
 
       // 2. Fetch memberships (CRITICAL STEP per guide)
@@ -172,7 +177,7 @@ export const authStore = {
 
   // ✅ CREATE COMPANY WITH MEMBERSHIP
   async createCompany(companyData: {
-    companyType: 'personal' | 'company';
+    // companyType removed - all companies are business entities
     name: string;
     email?: string;
     phoneNumber?: string;
@@ -231,6 +236,59 @@ export const authStore = {
     }
   },
 
+  // ✅ GET ALL USER COMPANIES for company selector
+  async getAllUserCompanies(): Promise<Company[]> {
+    try {
+      const companies = await apiClient.getAllUserCompanies();
+      return companies;
+    } catch (error) {
+      console.error('Failed to fetch user companies:', error);
+      return [];
+    }
+  },
+
+  // ✅ SET DEFAULT COMPANY (new backend feature)
+  async setDefaultCompany(companyId: string): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    try {
+      setAuthState('isLoading', true);
+
+      // First, call the API to set the default company
+      await apiClient.setDefaultCompany(companyId);
+
+      // After successfully setting the default company, refresh the user's memberships
+      // because setting a default company might create a new membership or update existing ones
+      if (authState.user) {
+        const membershipsResponse = await apiClient.request(
+          `/memberships/get/user/${authState.user._id}`
+        );
+
+        if (membershipsResponse.success && membershipsResponse.data) {
+          const memberships = membershipsResponse.data as Membership[];
+          this.setMemberships(memberships);
+
+          // Find the membership for the newly selected company
+          const membership = memberships.find((m) => m.companyId === companyId);
+          if (membership) {
+            this.setSelectedCompany(membership.company, membership.role);
+          }
+        }
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('Failed to set default company:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    } finally {
+      setAuthState('isLoading', false);
+    }
+  },
+
   // ✅ SELECT COMPANY (CRITICAL for multi-tenant)
   selectCompany(membership: Membership) {
     this.setSelectedCompany(membership.company, membership.role);
@@ -245,11 +303,12 @@ export const authStore = {
       memberships: [],
       isAuthenticated: false,
       isLoading: false,
+      isInitialized: false,
     });
 
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem('auth_user');
-      localStorage.removeItem('selected_company');
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      window.localStorage.removeItem('auth_user');
+      window.localStorage.removeItem('selected_company');
     }
   },
 
@@ -266,34 +325,94 @@ export const authStore = {
 
   // ✅ INITIALIZE AUTH (Check for stored session)
   async initializeAuth() {
-    if (typeof localStorage === 'undefined') return;
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined')
+      return;
+
+    // Prevent multiple concurrent initialization calls
+    if (this.isLoading || authState.isInitialized) {
+      return;
+    }
+
+    setAuthState('isLoading', true);
 
     try {
-      const storedUser = localStorage.getItem('auth_user');
-      const storedCompany = localStorage.getItem('selected_company');
+      const storedUser = window.localStorage.getItem('auth_user');
+      const storedCompany = window.localStorage.getItem('selected_company');
 
       if (storedUser) {
         const user = JSON.parse(storedUser) as User;
         this.setUser(user);
 
-        // Fetch fresh memberships
-        const membershipsResponse = await apiClient.request(
-          `/memberships/get/user/${user._id}`
-        );
-        if (membershipsResponse.success && membershipsResponse.data) {
-          this.setMemberships(membershipsResponse.data as Membership[]);
-        }
+        try {
+          // Fetch fresh memberships
+          const membershipsResponse = await apiClient.request(
+            `/memberships/get/user/${user._id}`
+          );
 
-        // Restore selected company if available
-        if (storedCompany) {
-          const { company, role } = JSON.parse(storedCompany);
-          setAuthState('selectedCompany', company);
-          setAuthState('userRole', role);
+          if (membershipsResponse.success && membershipsResponse.data) {
+            const memberships = membershipsResponse.data as Membership[];
+            this.setMemberships(memberships);
+
+            // Restore selected company if available and still valid
+            if (storedCompany) {
+              const { company: storedCompanyData } = JSON.parse(storedCompany);
+
+              // Find the matching membership with fresh company data
+              const matchingMembership = memberships.find(
+                (m) => m.companyId === storedCompanyData._id
+              );
+
+              if (matchingMembership) {
+                // Use fresh company data from membership, not stale localStorage data
+                setAuthState('selectedCompany', matchingMembership.company);
+                setAuthState('userRole', matchingMembership.role);
+
+                // Update localStorage with fresh data
+                window.localStorage.setItem(
+                  'selected_company',
+                  JSON.stringify({
+                    company: matchingMembership.company,
+                    role: matchingMembership.role,
+                  })
+                );
+              } else {
+                // Stored company no longer accessible, clear it
+                window.localStorage.removeItem('selected_company');
+              }
+            } else if (memberships.length > 0) {
+              // No stored company, auto-select the first one
+              const firstMembership = memberships[0];
+              setAuthState('selectedCompany', firstMembership.company);
+              setAuthState('userRole', firstMembership.role);
+
+              // Store the auto-selected company
+              window.localStorage.setItem(
+                'selected_company',
+                JSON.stringify({
+                  company: firstMembership.company,
+                  role: firstMembership.role,
+                })
+              );
+            }
+          } else {
+            this.setMemberships([]);
+          }
+        } catch (apiError) {
+          // If API call fails (e.g., token expired), clear auth and don't throw
+          console.warn(
+            'AuthStore - Failed to fetch memberships, clearing auth:',
+            apiError
+          );
+          this.clearAuth();
         }
       }
     } catch (error) {
+      console.error('AuthStore - Error in initializeAuth:', error);
       // Clear invalid stored data
       this.clearAuth();
+    } finally {
+      setAuthState('isLoading', false);
+      setAuthState('isInitialized', true);
     }
   },
 };
@@ -303,4 +422,5 @@ if (typeof window !== 'undefined') {
   authStore.initializeAuth();
 }
 
+// Export utilities for external use
 export default authStore;

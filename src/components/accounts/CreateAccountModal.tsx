@@ -1,10 +1,13 @@
-import { createSignal, Show, For } from 'solid-js';
-import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
-import { FormField } from '@/components/ui/FormField';
+import { createSignal, Show } from 'solid-js';
+import { Modal } from '@/components/ui/Modal';
+import { EmoneyInput } from '@/components/ui/EmoneyInput';
+import { EmoneySelect } from '@/components/ui/EmoneySelect';
+import { EmoneyTextarea } from '@/components/ui/EmoneyTextarea';
+import { KobalteButton } from '@/components/ui/KobalteButton';
 import type { AccountType, CreateAccountRequest } from '@/types';
 import { authStore } from '@/lib/auth/authStore';
 import { apiClient } from '@/lib/api/client';
+import { toastStore } from '@/lib/stores/toastStore';
 
 interface CreateAccountModalProps {
   isOpen: boolean;
@@ -97,7 +100,10 @@ export function CreateAccountModal(props: CreateAccountModalProps) {
     e.preventDefault();
 
     if (!validateForm()) return;
-    if (!authStore.selectedCompany) return;
+    if (!authStore.selectedCompany) {
+      toastStore.error('No company selected');
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -107,10 +113,15 @@ export function CreateAccountModal(props: CreateAccountModalProps) {
       };
 
       await apiClient.createAccount(requestData);
+      toastStore.success('Account created successfully!');
       props.onSuccess();
       resetForm();
+      props.onClose();
     } catch (error) {
       console.error('Failed to create account:', error);
+      toastStore.error(
+        error instanceof Error ? error.message : 'Failed to create account'
+      );
       setErrors({ submit: 'Failed to create account. Please try again.' });
     } finally {
       setIsSubmitting(false);
@@ -129,136 +140,102 @@ export function CreateAccountModal(props: CreateAccountModalProps) {
   };
 
   const handleClose = () => {
-    resetForm();
-    props.onClose();
+    if (!isSubmitting()) {
+      resetForm();
+      props.onClose();
+    }
   };
 
   return (
-    <Show when={props.isOpen}>
-      <div class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4">
-        <div class="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-lg bg-white">
-          <form onSubmit={handleSubmit} class="space-y-4 p-6">
-            <div class="mb-6 flex items-center justify-between">
-              <h3 class="text-lg font-semibold text-gray-900">
-                Create New Account
-              </h3>
-              <button
-                type="button"
-                onClick={handleClose}
-                class="text-gray-400 hover:text-gray-600"
-              >
-                <svg
-                  class="h-6 w-6"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    stroke-width="2"
-                    d="M6 18L18 6M6 6l12 12"
-                  />
-                </svg>
-              </button>
-            </div>
+    <Modal
+      isOpen={props.isOpen}
+      onClose={handleClose}
+      title="💼 Create New Account"
+      maxWidth="md"
+    >
+      <form onSubmit={handleSubmit} class="space-y-4">
+        <Show when={errors().submit}>
+          <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {errors().submit}
+          </div>
+        </Show>
 
-            <Show when={errors().submit}>
-              <div class="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                {errors().submit}
-              </div>
-            </Show>
+        {/* Account Code */}
+        <EmoneyInput
+          label="Account Code"
+          type="text"
+          placeholder="e.g., 1110 (US GAAP: 1000-1999 Assets, 2000-2999 Liabilities, 3000-3999 Equity, 4000-4999 Revenue, 5000-5999 Expenses)"
+          value={formData().code || ''}
+          onInput={(value) => updateFormData('code', value)}
+          error={errors().code}
+          required
+        />
 
-            <FormField label="Account Code" required error={errors().code}>
-              <Input
-                type="text"
-                placeholder="e.g., 1000"
-                value={formData().code || ''}
-                onInput={(e) => updateFormData('code', e.currentTarget.value)}
-                error={errors().code}
-              />
-            </FormField>
+        {/* Account Name */}
+        <EmoneyInput
+          label="Account Name"
+          type="text"
+          placeholder="e.g., Cash in Bank"
+          value={formData().name || ''}
+          onInput={(value) => updateFormData('name', value)}
+          error={errors().name}
+          required
+        />
 
-            <FormField label="Account Name" required error={errors().name}>
-              <Input
-                type="text"
-                placeholder="e.g., Cash in Bank"
-                value={formData().name || ''}
-                onInput={(e) => updateFormData('name', e.currentTarget.value)}
-                error={errors().name}
-              />
-            </FormField>
+        {/* Account Type */}
+        <EmoneySelect
+          label="Account Type"
+          placeholder="Select account type"
+          value={formData().accountType || 'ASSET'}
+          options={accountTypes.map((type) => ({
+            value: type.value,
+            label: type.label,
+          }))}
+          onChange={(value) => {
+            updateFormData('accountType', value as AccountType);
+            // Reset subtype when account type changes
+            setFormData((prev) => ({ ...prev, subType: '' }));
+          }}
+          required
+        />
 
-            <FormField
-              label="Account Type"
-              required
-              error={errors().accountType}
-            >
-              <select
-                class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={formData().accountType || 'ASSET'}
-                onChange={(e) => {
-                  updateFormData(
-                    'accountType',
-                    e.currentTarget.value as AccountType
-                  );
-                  // Reset subtype when account type changes
-                  setFormData((prev) => ({ ...prev, subType: '' }));
-                }}
-              >
-                <For each={accountTypes}>
-                  {(type) => <option value={type.value}>{type.label}</option>}
-                </For>
-              </select>
-            </FormField>
+        {/* Sub Type */}
+        <EmoneySelect
+          label="Sub Type"
+          placeholder="Select a sub-type"
+          value={formData().subType || ''}
+          options={selectedAccountType().subtypes.map((subtype) => ({
+            value: subtype,
+            label: subtype,
+          }))}
+          onChange={(value) => updateFormData('subType', value)}
+          error={errors().subType}
+          required
+        />
 
-            <FormField label="Sub Type" required error={errors().subType}>
-              <select
-                class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={formData().subType || ''}
-                onChange={(e) =>
-                  updateFormData('subType', e.currentTarget.value)
-                }
-              >
-                <option value="">Select a sub-type</option>
-                <For each={selectedAccountType().subtypes}>
-                  {(subtype) => <option value={subtype}>{subtype}</option>}
-                </For>
-              </select>
-            </FormField>
+        {/* Description */}
+        <EmoneyTextarea
+          label="Description"
+          placeholder="Optional description..."
+          value={formData().description || ''}
+          onInput={(value) => updateFormData('description', value)}
+          rows={3}
+        />
 
-            <FormField label="Description" error={errors().description}>
-              <textarea
-                class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-                rows="3"
-                placeholder="Optional description..."
-                value={formData().description || ''}
-                onInput={(e) =>
-                  updateFormData('description', e.currentTarget.value)
-                }
-              />
-            </FormField>
-
-            <div class="flex justify-end space-x-3 pt-4">
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={handleClose}
-                disabled={isSubmitting()}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                loading={isSubmitting()}
-                disabled={isSubmitting()}
-              >
-                Create Account
-              </Button>
-            </div>
-          </form>
+        {/* Action Buttons */}
+        <div class="flex justify-end space-x-3 pt-4">
+          <KobalteButton
+            variant="secondary"
+            onClick={handleClose}
+            disabled={isSubmitting()}
+          >
+            Cancel
+          </KobalteButton>
+          <KobalteButton type="submit" disabled={isSubmitting()}>
+            {isSubmitting() ? 'Creating...' : 'Create Account'}
+          </KobalteButton>
         </div>
-      </div>
-    </Show>
+      </form>
+    </Modal>
   );
 }

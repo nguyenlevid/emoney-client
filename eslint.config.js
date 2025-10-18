@@ -14,6 +14,12 @@ export default [
         sourceType: 'module',
         project: './tsconfig.app.json',
       },
+      globals: {
+        console: 'readonly',
+        document: 'readonly',
+        window: 'readonly',
+        navigator: 'readonly',
+      },
     },
     plugins: {
       '@typescript-eslint': tsPlugin,

@@ -8,9 +8,9 @@ const CreateCompanyPage = () => {
   const [isLoading, setIsLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
 
-  // Form fields - Enhanced for dual-purpose system
+  // Form fields - Business accounting only
   const [formData, setFormData] = createSignal({
-    companyType: 'company' as 'personal' | 'company', // ✅ KEY: Support both workspace types
+    // companyType removed - all companies are business entities
     name: '',
     email: '',
     phoneNumber: '',
@@ -44,9 +44,9 @@ const CreateCompanyPage = () => {
     }
 
     try {
-      // ✅ CREATE COMPANY WITH MEMBERSHIP (Per Enhanced Backend)
+      // ✅ CREATE COMPANY WITH MEMBERSHIP (Business only)
       const result = await authStore.createCompany({
-        companyType: data.companyType,
+        // companyType removed - all companies are business entities
         name: data.name.trim(),
         email: data.email.trim() || undefined,
         phoneNumber: data.phoneNumber.trim() || undefined,
@@ -90,35 +90,10 @@ const CreateCompanyPage = () => {
         </div>
 
         <form onSubmit={handleSubmit} class="space-y-4">
-          {/* Workspace Type */}
-          <div>
-            <label class="mb-1 block text-sm font-medium text-gray-700">
-              Workspace Type *
-            </label>
-            <select
-              value={formData().companyType}
-              onChange={(e) =>
-                handleInputChange('companyType', e.currentTarget.value)
-              }
-              class="w-full rounded-md border border-gray-300 px-3 py-2 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-blue-500"
-              disabled={isLoading()}
-            >
-              <option value="personal">
-                Personal Finance - Manage personal finances
-              </option>
-              <option value="company">
-                Business Accounting - Manage business finances
-              </option>
-            </select>
-          </div>
-
           {/* Company Name */}
           <div>
             <label class="mb-1 block text-sm font-medium text-gray-700">
-              {formData().companyType === 'personal'
-                ? 'Workspace Name'
-                : 'Company Name'}{' '}
-              *
+              Company Name *
             </label>
             <input
               type="text"
