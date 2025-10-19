@@ -17,7 +17,7 @@ import { EmoneyInput } from '@/components/ui/EmoneyInput';
 import { EmoneySelect } from '@/components/ui/EmoneySelect';
 import { CreateExpenseModal } from '@/components/transactions/CreateExpenseModal';
 import { CreateRevenueModal } from '@/components/transactions/CreateRevenueModal';
-import { CreateJournalEntryModal } from '@/components/transactions/CreateJournalEntryModal';
+import { CreateJournalEntryModal } from '@/components/transactions/CreateJournalEntryModal.refactored';
 import { EditTransactionModal } from '@/components/transactions/EditTransactionModal';
 import { DeleteTransactionModal } from '@/components/transactions/DeleteTransactionModal';
 import { apiClient } from '@/lib/api/client';

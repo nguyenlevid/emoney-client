@@ -7,11 +7,11 @@ interface TokenExpirationNotifierProps {
 
 export function TokenExpirationNotifier(props: TokenExpirationNotifierProps) {
   const [showMessage, setShowMessage] = createSignal(false);
-  const [timeLeft, setTimeLeft] = createSignal(0);
+  const [timeLeft] = createSignal(0); // setTimeLeft will be used when token validation is implemented
 
   // Check token expiration periodically
-  let checkInterval: number;
-  let countdownInterval: number;
+  let checkInterval: number | undefined;
+  let countdownInterval: number | undefined;
 
   const checkTokenExpiration = async () => {
     if (!authStore.isAuthenticated) return;

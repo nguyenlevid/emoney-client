@@ -262,10 +262,30 @@ export type TransactionSourceType =
   | 'EXPENSE'
   | 'PAYMENT';
 
+// TransactionEntry: Used for API responses (GET requests)
+// - Backend populates 'account' with full Account object or just ID
+// - Can be a string (ID) or populated object
 export interface TransactionEntry {
   _id?: string;
-  account: string;
-  accountName?: string;
+  account:
+    | string
+    | {
+        _id: string;
+        name: string;
+        code: string;
+        type: string;
+      };
+  accountName?: string; // Deprecated: use account.name when populated
+  debit: number;
+  credit: number;
+  description?: string;
+}
+
+// TransactionEntryRequest: Used for API requests (POST/PUT)
+// - Backend validation expects 'accountId' (clearer naming - it's an ID reference)
+// - Use this when creating or updating transactions
+export interface TransactionEntryRequest {
+  accountId: string; // Backend Zod schema expects 'accountId', not 'account'
   debit: number;
   credit: number;
   description?: string;
@@ -302,7 +322,7 @@ export interface CreateTransactionRequest {
   description: string;
   reference?: string;
   sourceType?: TransactionSourceType;
-  entries: Omit<TransactionEntry, '_id'>[];
+  entries: TransactionEntryRequest[];
   customerId?: string;
   supplierId?: string;
   notes?: string;
@@ -313,7 +333,7 @@ export interface UpdateTransactionRequest {
   date?: string;
   description?: string;
   reference?: string;
-  entries?: Omit<TransactionEntry, '_id'>[];
+  entries?: TransactionEntryRequest[]; // Backend expects 'accountId'
   customerId?: string;
   supplierId?: string;
   merchant?: string;

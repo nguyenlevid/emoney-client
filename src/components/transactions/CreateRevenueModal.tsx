@@ -87,13 +87,13 @@ export const CreateRevenueModal = (props: CreateRevenueModalProps) => {
         notes: data.notes,
         entries: [
           {
-            account: data.receivableAccountId, // Debit - increase asset
+            accountId: data.receivableAccountId, // Backend expects 'accountId'
             debit: data.amount,
             credit: 0,
             description: data.description,
           },
           {
-            account: data.revenueAccountId, // Credit - increase revenue
+            accountId: data.revenueAccountId, // Backend expects 'accountId'
             debit: 0,
             credit: data.amount,
             description: data.description,

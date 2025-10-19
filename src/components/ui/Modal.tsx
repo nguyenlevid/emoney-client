@@ -67,7 +67,7 @@ export const Modal = (props: ModalProps) => {
             class={`w-full ${maxWidthClass()} flex max-h-[90vh] animate-scale-in flex-col rounded-2xl border border-white/20 bg-white/95 shadow-2xl backdrop-blur-xl`}
           >
             {/* Header - Fixed */}
-            <div class="flex items-center justify-between border-b border-gray-200/50 bg-white/50 px-6 py-4 backdrop-blur-xl">
+            <div class="flex items-center justify-between rounded-t-2xl border-b border-gray-200/50 bg-white/50 px-6 py-4 backdrop-blur-xl">
               <h2 class="bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-xl font-semibold text-transparent">
                 {props.title}
               </h2>

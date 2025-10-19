@@ -8,11 +8,7 @@ import { EmoneyTextarea } from '@/components/ui/EmoneyTextarea';
 import { apiClient } from '@/lib/api/client';
 import { authStore } from '@/lib/auth/authStore';
 import { toastStore } from '@/lib/stores/toastStore';
-import type {
-  Transaction,
-  UpdateTransactionRequest,
-  TransactionEntry,
-} from '@/types';
+import type { Transaction, UpdateTransactionRequest } from '@/types';
 
 interface EditTransactionModalProps {
   isOpen: boolean;
@@ -106,12 +102,17 @@ export const EditTransactionModal = (props: EditTransactionModalProps) => {
   // Check if transaction is reconciled
   const isReconciled = createMemo(() => !!props.transaction?.reconciledAt);
 
-  // Update entry field
+  // Update entry field - skip if value hasn't changed (prevents unnecessary re-renders)
   const updateEntry = (
     id: number,
     field: keyof JournalEntryLine,
     value: string
   ) => {
+    const entry = entries().find((e) => e.id === id);
+    // Don't update if value hasn't changed (prevents unnecessary re-renders)
+    if (entry && entry[field] === value) {
+      return;
+    }
     setEntries(
       entries().map((entry) =>
         entry.id === id ? { ...entry, [field]: value } : entry
@@ -119,25 +120,21 @@ export const EditTransactionModal = (props: EditTransactionModalProps) => {
     );
   };
 
-  // Handle description input - no state update on input, only on blur
+  // Handle description blur - delay update to not interfere with tab navigation
   const handleDescriptionBlur = (
     e: FocusEvent & { currentTarget: HTMLInputElement },
-    id: number,
-    field: 'description'
+    id: number
   ) => {
-    const value = e.currentTarget.value.trim();
-    setEntries(
-      entries().map((entry) =>
-        entry.id === id ? { ...entry, [field]: value } : entry
-      )
-    );
+    const value = e.currentTarget.value;
+    // Delay state update until after tab navigation completes
+    setTimeout(() => {
+      updateEntry(id, 'description', value);
+    }, 50);
   };
 
-  // Handle amount input change - filters but doesn't cause re-render issues
+  // Handle amount input - filter only, DON'T update state yet
   const handleAmountInput = (
-    e: InputEvent & { currentTarget: HTMLInputElement },
-    _id: number,
-    _field: 'debitAmount' | 'creditAmount'
+    e: InputEvent & { currentTarget: HTMLInputElement }
   ) => {
     const input = e.currentTarget;
     const cursorPosition = input.selectionStart || 0;
@@ -159,7 +156,7 @@ export const EditTransactionModal = (props: EditTransactionModalProps) => {
       finalValue = parts[0] + '.' + parts.slice(1).join('');
     }
 
-    // Update the input value directly (no state update yet)
+    // Update the input value directly (no state update!)
     if (finalValue !== oldValue) {
       input.value = finalValue;
       // Restore cursor position
@@ -167,40 +164,50 @@ export const EditTransactionModal = (props: EditTransactionModalProps) => {
     }
   };
 
-  // Update state only on blur for better performance
+  // Update state only on blur - delay to not interfere with tab navigation
   const handleAmountBlur = (
     e: FocusEvent & { currentTarget: HTMLInputElement },
     id: number,
     field: 'debitAmount' | 'creditAmount'
   ) => {
-    let value = e.currentTarget.value.trim();
+    const input = e.currentTarget;
+    let value = input.value.trim();
 
     if (!value || value === '' || value === '.') {
       value = '';
     } else {
-      // Sanitize: limit to 2 decimal places
+      // Limit to 2 decimal places
       const parts = value.split('.');
       if (parts.length > 1) {
         value = parts[0] + '.' + parts[1].slice(0, 2);
       }
+    }
 
-      // Remove leading zeros except for "0" or "0.xx"
-      if (value.length > 1 && value[0] === '0' && value[1] !== '.') {
-        value = value.replace(/^0+/, '');
-      }
-
-      // Ensure we don't have an empty string after removing zeros
-      if (value === '' || value === '.') {
-        value = '';
+    // Double-entry rule: A line can have either debit OR credit, not both
+    // If entering a value, immediately clear the opposite field's DOM
+    if (value) {
+      const oppositeFieldName = field === 'debitAmount' ? 'credit' : 'debit';
+      const oppositeInput = document.querySelector(
+        `input[name="${oppositeFieldName}-${id}"]`
+      ) as HTMLInputElement;
+      if (oppositeInput && oppositeInput.value) {
+        oppositeInput.value = ''; // Clear immediately before setTimeout
       }
     }
 
-    // Update state only on blur
-    setEntries(
-      entries().map((entry) =>
-        entry.id === id ? { ...entry, [field]: value } : entry
-      )
-    );
+    // Delay state update until after tab navigation completes
+    setTimeout(() => {
+      if (value) {
+        // User entered a value in this field - clear opposite field
+        const oppositeField =
+          field === 'debitAmount' ? 'creditAmount' : 'debitAmount';
+        updateEntry(id, field, value);
+        updateEntry(id, oppositeField, '');
+      } else {
+        // User cleared this field - only update this field
+        updateEntry(id, field, value);
+      }
+    }, 50);
   };
 
   // Add new line
@@ -308,15 +315,12 @@ export const EditTransactionModal = (props: EditTransactionModalProps) => {
         description: data.description.trim(),
         reference: data.reference?.trim() || undefined,
         notes: data.notes?.trim() || undefined,
-        entries: validEntries.map((entry) => {
-          const entryData: Omit<TransactionEntry, '_id'> = {
-            account: entry.accountId,
-            debit: parseFloat(entry.debitAmount) || 0,
-            credit: parseFloat(entry.creditAmount) || 0,
-            description: entry.description?.trim() || undefined,
-          };
-          return entryData;
-        }),
+        entries: validEntries.map((entry) => ({
+          accountId: entry.accountId, // Backend expects 'accountId' for requests
+          debit: parseFloat(entry.debitAmount) || 0,
+          credit: parseFloat(entry.creditAmount) || 0,
+          description: entry.description?.trim() || undefined,
+        })),
       };
 
       await apiClient.updateTransaction(
@@ -496,9 +500,7 @@ export const EditTransactionModal = (props: EditTransactionModalProps) => {
                           placeholder="Line description"
                           value={entry.description}
                           tabIndex={index() * 10 + 2}
-                          onBlur={(e) =>
-                            handleDescriptionBlur(e, entry.id, 'description')
-                          }
+                          onBlur={(e) => handleDescriptionBlur(e, entry.id)}
                           disabled={isReconciled()}
                         />
                       </td>
@@ -506,13 +508,12 @@ export const EditTransactionModal = (props: EditTransactionModalProps) => {
                         <input
                           type="text"
                           inputMode="decimal"
+                          name={`debit-${entry.id}`}
                           class="w-full rounded-md border border-gray-300 px-3 py-2 text-right text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-100"
                           placeholder="0.00"
                           value={entry.debitAmount}
                           tabIndex={index() * 10 + 3}
-                          onInput={(e) =>
-                            handleAmountInput(e, entry.id, 'debitAmount')
-                          }
+                          onInput={(e) => handleAmountInput(e)}
                           onBlur={(e) =>
                             handleAmountBlur(e, entry.id, 'debitAmount')
                           }
@@ -523,13 +524,12 @@ export const EditTransactionModal = (props: EditTransactionModalProps) => {
                         <input
                           type="text"
                           inputMode="decimal"
+                          name={`credit-${entry.id}`}
                           class="w-full rounded-md border border-gray-300 px-3 py-2 text-right text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:cursor-not-allowed disabled:bg-gray-100"
                           placeholder="0.00"
                           value={entry.creditAmount}
                           tabIndex={index() * 10 + 4}
-                          onInput={(e) =>
-                            handleAmountInput(e, entry.id, 'creditAmount')
-                          }
+                          onInput={(e) => handleAmountInput(e)}
                           onBlur={(e) =>
                             handleAmountBlur(e, entry.id, 'creditAmount')
                           }

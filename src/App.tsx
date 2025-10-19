@@ -7,7 +7,6 @@ import CreateCompanyPage from '@/pages/auth/CreateCompanyPage';
 import DashboardPage from '@/pages/DashboardPage';
 import AccountsPage from '@/pages/AccountsPage';
 import TransactionsPage from '@/pages/TransactionsPage';
-import FuturisticDemo from '@/pages/FuturisticDemo';
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute';
 import { AuthRedirect } from '@/components/auth/AuthRedirect';
 import MainLayout from '@/components/layout/MainLayout';
@@ -137,7 +136,6 @@ function App() {
               </ProtectedRoute>
             )}
           />
-          <Route path="/demo" component={FuturisticDemo} />
         </Suspense>
       </Router>
     </QueryClientProvider>

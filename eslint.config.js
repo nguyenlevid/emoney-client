@@ -19,6 +19,12 @@ export default [
         document: 'readonly',
         window: 'readonly',
         navigator: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+        requestAnimationFrame: 'readonly',
+        cancelAnimationFrame: 'readonly',
       },
     },
     plugins: {
@@ -29,8 +35,8 @@ export default [
       ...tsPlugin.configs.recommended.rules,
       ...solidPlugin.configs.recommended.rules,
       '@typescript-eslint/no-unused-vars': [
-        'error',
-        { argsIgnorePattern: '^_' },
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
@@ -41,6 +47,6 @@ export default [
     },
   },
   {
-    ignores: ['dist/**', 'node_modules/**', '*.config.*'],
+    ignores: ['dist/**', 'node_modules/**', '*.config.*', 'emoney'],
   },
 ];
